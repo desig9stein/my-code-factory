@@ -34,8 +34,9 @@ The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foregro
 
 ## Included
 
-- Dark work queue, project list, and stage activity.
-- Committed diffs, evidence logs, task briefs, and review drafts.
+- Dark work queue grouped by what needs you, project list, stage activity, and a metrics page.
+- A task overview that says what the stage needs next, with acceptance criteria, checks, change size, and the text an approval covers.
+- Committed diffs by file with added and removed lines marked, evidence runs with the end of each log inline, task briefs, and review drafts.
 - Backend-checked approval bound to the displayed commit/draft, plus archive with dirty-worktree protection. These buttons do not publish or merge.
 - A new-task dialog that generates the CLI command; task creation still happens in the terminal.
 - Full-task and individual linked-session token counts: uncached input, cache write, cache read, output, and totals.

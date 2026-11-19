@@ -242,6 +242,18 @@ test('implement needs a commit and a clean tree', () => {
   assert.equal(cli('advance', ID).status, 0);
 });
 
+test('the board says what the stage needs, and how large the change is, without moving the task', () => {
+  const before = fs.readFileSync(path.join(ISSUE, 'state.json'), 'utf8');
+  const data = boardData();
+  const issue = data.issues.find((i) => i.id === ID);
+  assert.equal(issue.needs.canAdvance, false);
+  assert.match(issue.needs.problems.join('\n'), /Gate "lint" is not-run/);
+  assert.match(issue.needs.problems.join('\n'), /Regression proof is missing/);
+  assert.deepEqual(issue.changes, { files: 2, additions: 5, deletions: 1 });
+  assert.equal(data.metrics.tasks.some((t) => t.id === ID), true);
+  assert.equal(fs.readFileSync(path.join(ISSUE, 'state.json'), 'utf8'), before);
+});
+
 test('a gate runs only the registry command', () => {
   const r = cli('run', ID, 'test', '--', 'true');
   assert.equal(r.status, 1);
