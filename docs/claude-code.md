@@ -1,0 +1,19 @@
+# Optional Claude Code adapter
+
+The engine is a CLI usable from any harness. The included hook adapter understands Claude Code's tool payloads and JSONL usage records. Other harnesses can run the CLI, but their hooks and token formats are not implemented here.
+
+Run this from the factory installation, with the same `FACTORY_ROOT` and `FACTORY_WORKSPACE` overrides used by your board:
+
+```sh
+factory hooks
+```
+
+It prints a JSON `hooks` object with fully quoted local paths for `PreToolUse`, `PostToolUse`, and `SessionStart`. Merge these entries into your existing Claude Code settings. Do not replace other hooks or settings. Nothing is installed automatically, and generated machine paths should stay out of Git.
+
+- Pre-tool hook: refuses supported outward actions on unapproved factory work, direct writes to protected evidence/state, and agent access to the human approval UI.
+- Post-tool hook: links transcript paths to task IDs mentioned by tool calls, then updates board data.
+- Session-start hook: summarizes tasks in flight.
+
+Keep your harness's own sandbox and permissions enabled. Shell-pattern guards cannot cover every possible program, protocol, or malicious tool. A process with unrestricted filesystem access can bypass these conventions.
+
+The human runs the board and handles approval. Agents use `factory status <id>` and recorded CLI operations. Follow [the workflow](workflow.md), plus each project's own instructions and verification commands.

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<meta name="color-scheme" content="dark"><title>Code Factory</title>
+<style>/*factory-style*/</style>
+<!--factory-token-->
+</head>
+<body id="factory-dark">
+<div class="fd-app">
+<header class="fd-top"><div class="fd-brand"><span aria-hidden="true">▥</span> code factory</div><span class="fd-top-note">LOCAL WORKSPACE</span><span id="connection" role="status">Loading…</span></header>
+<div class="fd-shell">
+<nav class="fd-nav" aria-label="Workspace"><small>WORKSPACE</small><button data-view="work" aria-pressed="true">Work queue</button><button data-view="projects" aria-pressed="false">Projects</button><button data-view="activity" aria-pressed="false">Activity</button><div class="fd-nav-foot">Personal factory<br>Local data · local decisions</div></nav>
+<main class="fd-work">
+<div class="fd-toolbar"><h2 id="view-title">Work queue</h2><button class="fd-btn" id="new-task">+ New task</button></div>
+<div id="notice" role="status" aria-live="polite"></div>
+<section id="work" class="fd-split"><aside class="fd-queue" aria-label="Tasks"><div class="fd-queue-label"><span>IN FLIGHT</span><span id="task-count">0</span></div><label class="search-label">Filter tasks<input id="search" type="search" placeholder="Title or project"></label><div id="tasks"></div></aside><article class="fd-detail" id="detail"></article></section>
+<section id="projects" class="fd-page" hidden></section><section id="activity" class="fd-page" hidden></section>
+</main></div>
+<footer class="fd-bottom-bar"><span>Recorded evidence. Human decisions.</span><span id="updated">Waiting for local data</span></footer>
+</div>
+<dialog id="new-dialog"><form method="dialog"><h2>Start a task</h2><p>Choose a registered project and GitHub issue or pull request. Run the generated command in your terminal.</p><label>Project<select id="new-project" required></select></label><label>Kind<select id="new-kind"><option value="new">Issue to implement</option><option value="review">Pull request to review</option></select></label><label>GitHub number<input id="new-number" type="number" min="1" step="1" required></label><pre id="new-command">Choose a project and enter a number.</pre><p class="fd-caption">The CLI fetches the snapshot and creates an isolated worktree. The task appears here automatically.</p><div class="fd-actions"><button type="button" id="copy-command" class="fd-btn">Copy command</button><button class="fd-btn" formnovalidate>Close</button></div></form></dialog>
+<dialog id="action-dialog"><form method="dialog"><h2 id="action-title"></h2><p id="action-text"></p><div class="fd-actions"><button type="button" class="fd-btn fd-primary" id="confirm-action">Confirm</button><button class="fd-btn">Cancel</button></div></form></dialog>
+<script>/*factory-client*/</script>
+<script src="board-data.js"></script>
+</body></html>

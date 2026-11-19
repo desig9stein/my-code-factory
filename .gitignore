@@ -1,0 +1,20 @@
+node_modules/
+.DS_Store
+.env
+.env.*
+!.env.example
+.factory/
+.local/
+coverage/
+playwright-report/
+test-results/
+# Legacy runtime data must never be published.
+repos.json
+config.json
+issues/
+worktrees/
+board.html
+board-data.js
+.board.pid
+WORK_LOG.md
+.board-*.pid

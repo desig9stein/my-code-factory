@@ -1,0 +1,14 @@
+{
+  "name": "my-code-factory",
+  "version": "0.1.0",
+  "description": "A local code factory with recorded verification, a dark review desk, and transparent usage scenarios.",
+  "type": "module",
+  "private": true,
+  "bin": { "factory": "bin/factory.mjs", "factory-guard": "bin/guard.mjs" },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node bin/factory.mjs serve",
+    "test": "node --test test/*.test.mjs",
+    "verify": "node scripts/verify.mjs"
+  }
+}
