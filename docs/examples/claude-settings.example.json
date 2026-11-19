@@ -1,0 +1,24 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "denyRead": ["~/.ssh", "~/.aws"]
+    },
+    "network": {
+      "allowedDomains": ["github.com", "registry.npmjs.org"]
+    }
+  },
+  "permissions": {
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(npm publish *)",
+      "Bash(rm -rf *)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ],
+    "ask": ["Bash(git push *)"]
+  }
+}

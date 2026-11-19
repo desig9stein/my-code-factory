@@ -12,7 +12,7 @@ node /path/to/my-code-factory/bin/factory.mjs board
 
 Use a different port while the old board is running. The new board uses a port-specific PID file. Keep these environment settings in your own shell profile or launcher, never in the public source repository. Existing hook settings continue pointing at the original implementation until you explicitly update them.
 
-The new code refreshes token caches with session subtotals and data availability metadata; old readers ignore the additional fields. Worktree paths, stage rules, and task IDs remain compatible. Use only one CLI writer at a time: this release does not implement process-wide locking.
+The new code refreshes token caches with session subtotals and data availability metadata; old readers ignore the additional fields. Worktree paths and task IDs remain compatible. Task state gained two optional fields: `tier` (absent means standard) and `approvedDraftSha256` on issues, the hash of the approved `pr-body.md`. An issue approved by an older version has no hash, so only its commit is checked until it is approved again. Evidence records may carry `timedOut`, `match` and `matched`; older readers ignore them. A plan written before this version needs an `## Acceptance criteria` section only if the task has not yet left the plan stage. Use only one CLI writer at a time: this release does not implement process-wide locking.
 
 Do not physically move active worktrees. Git records their locations, task states contain absolute paths, and transcript links refer to files on the current machine. Finish/archive tasks first, or perform a separate deliberate Git worktree migration. To revert the interface, stop the new board and continue using the old one.
 

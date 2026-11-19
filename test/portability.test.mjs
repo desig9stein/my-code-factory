@@ -53,3 +53,19 @@ test('generated hook commands preserve paths containing spaces and shell metacha
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stderr, '');
 });
+
+test('shipped skills, agent and example settings are well formed', () => {
+  const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const frontmatter = (file) => Object.fromEntries(/^---\n([\s\S]*?)\n---\n/.exec(fs.readFileSync(path.join(code, file), 'utf8'))[1].split('\n').map((line) => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 1).trim()]));
+  for (const name of ['factory', 'factory-verify']) {
+    const meta = frontmatter(`.agents/skills/${name}/SKILL.md`);
+    assert.equal(meta.name, name);
+    assert.ok(meta.description.length > 40);
+  }
+  const agent = frontmatter('.claude/agents/factory-verifier.md');
+  assert.equal(agent.name, 'factory-verifier');
+  assert.doesNotMatch(agent.tools, /Edit|Write/);
+  const settings = JSON.parse(fs.readFileSync(path.join(code, 'docs/examples/claude-settings.example.json'), 'utf8'));
+  assert.equal(settings.sandbox.enabled, true);
+  assert.ok(settings.permissions.deny.includes('Bash(git push --force *)'));
+});
