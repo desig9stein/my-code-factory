@@ -27,3 +27,17 @@ test('session subtotals reconcile, missing transcripts are partial rather than z
   fs.rmSync(a);
   assert.equal(issueTokens(state, { force: true }).availability, 'unavailable');
 });
+test('a call naming app-42 is not attributed to app-4 or to my-app-42', async () => {
+  const { namesId } = await import('../lib/paths.mjs');
+  const file = path.join(root, 'prefix.jsonl');
+  fs.writeFileSync(file, row('p', 9));
+  for (const id of ['app-4', 'pp-42']) {
+    fs.mkdirSync(path.join(root, 'issues', id), { recursive: true });
+    linkSession(id, file);
+    assert.equal(issueTokens({ id, createdAt: state.createdAt, history: [] }, { force: true }).availability, 'unavailable');
+  }
+  assert.equal(namesId('cd /data/worktrees/app-42/src', 'app-42'), true);
+  assert.equal(namesId('"factory status app-42"', 'app-42'), true);
+  assert.equal(namesId('my-app-42', 'app-42'), false);
+  assert.equal(namesId('axb-1', 'a.b-1'), false);
+});

@@ -11,7 +11,7 @@ import { initialize, addProject } from '../lib/setup.mjs';
 import { writeBoard } from '../lib/board.mjs';
 import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } from '../lib/checks.mjs';
 import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyChain } from '../lib/evidence.mjs';
-import { factoryRoot, issueDir, worktreesDir } from '../lib/paths.mjs';
+import { factoryRoot, issueDir, subdirOf, worktreesDir } from '../lib/paths.mjs';
 import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
@@ -267,15 +267,15 @@ const commands = {
     if (name === 'install') spec = { name, kind: 'setup', cmd: repo.install, cwd: state.worktree };
     else if (name === 'reproduce') {
       if (!args.rest) throw new Error('reproduce needs the command after "--".');
-      spec = { name, kind: 'run', cmd: args.rest, cwd: path.join(state.worktree, args.cwd || ''), expect: args['expect-fail'] ? 'fail' : 'pass' };
+      spec = { name, kind: 'run', cmd: args.rest, cwd: subdirOf(state.worktree, args.cwd), expect: args['expect-fail'] ? 'fail' : 'pass' };
     } else if (/^extra:[\w.-]+$/.test(name || '')) {
       if (!args.rest) throw new Error('An extra run needs the command after "--".');
-      spec = { name, kind: 'run', cmd: args.rest, cwd: path.join(state.worktree, args.cwd || '') };
+      spec = { name, kind: 'run', cmd: args.rest, cwd: subdirOf(state.worktree, args.cwd) };
     } else {
       const gate = repo.gates.find((g) => g.name === name);
       if (!gate) throw new Error(`"${name}" is not a gate of ${repo.key}. Gates: ${repo.gates.map((g) => g.name).join(', ')}. Other checks use the name extra:<label>.`);
       if (args.rest) throw new Error('A gate always runs the registry command; remove the text after "--".');
-      spec = { name, kind: 'gate', cmd: gate.cmd, cwd: path.join(state.worktree, gate.cwd || '') };
+      spec = { name, kind: 'gate', cmd: gate.cmd, cwd: subdirOf(state.worktree, gate.cwd) };
     }
     if (!spec.cmd) throw new Error(`${repo.key} has no ${name} command in the registry.`);
     console.log(`$ ${spec.cmd}   (in ${spec.cwd})`);

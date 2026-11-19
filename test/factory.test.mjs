@@ -153,6 +153,21 @@ test('an unclear verdict blocks the issue until it is unblocked', () => {
   assert.equal(loadState(ID).stage, 'reproduce');
 });
 
+test('a reproduction recorded without --expect-fail does not count', () => {
+  assert.equal(cli('run', ID, 'reproduce', '--', 'true').status, 0);
+  const r = cli('advance', ID);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /without --expect-fail/);
+  assert.equal(loadState(ID).stage, 'reproduce');
+});
+
+test('a recorded command cannot leave the worktree', () => {
+  const r = cli('run', ID, 'extra:escape', '--cwd', '../..', '--', 'pwd');
+  assert.equal(r.status, 1);
+  assert.match(r.out, /leaves the worktree/);
+  assert.match(cli('regress', ID, '--tests', 'test/smoke.test.mjs', '--cwd', '..', '--', 'true').out, /leaves the worktree/);
+});
+
 test('a reproduction that exits 0 does not count', () => {
   cli('run', ID, 'reproduce', '--expect-fail', '--', 'true');
   assert.match(cli('advance', ID).out, /did not show the bug/);
@@ -238,6 +253,18 @@ test('a PR body edited after the verdict needs a new verdict', () => {
 test('ready still refuses the push until approval', () => {
   assert.equal(bash('git push -u origin HEAD', WT).deny, true);
   approve(loadState(ID));
+  assert.equal(bash('git push -u origin HEAD', WT).deny, false);
+});
+
+test('a PR body edited after approval refuses the push until the approved text returns', () => {
+  const body = path.join(ISSUE, 'pr-body.md');
+  const approved = fs.readFileSync(body, 'utf8');
+  write(body, `${approved}\nA claim nobody approved.\n`);
+  const refused = bash('gh pr create --head me/fix-7-add-returns-the-difference --body-file pr-body.md');
+  assert.equal(refused.deny, true);
+  assert.match(refused.reason, /unchanged pr-body\.md/);
+  assert.equal(bash('git push -u origin HEAD', WT).deny, true);
+  write(body, approved);
   assert.equal(bash('git push -u origin HEAD', WT).deny, false);
 });
 
@@ -333,6 +360,13 @@ test('the board server archives only with its token and its own host', async () 
     const token = /__factoryToken="([0-9a-f]{32})"/.exec(page)?.[1];
     assert.ok(token);
     assert.match(await (await call('/board-data.js')).text(), /"id":"demo-7"/);
+    // Another site including the data as a script is refused; the page's own requests are not.
+    for (const site of ['cross-site', 'same-site']) {
+      const foreign = await call('/board-data.js', { headers: { 'sec-fetch-site': site } });
+      assert.equal(foreign.status, 403);
+      assert.doesNotMatch(await foreign.text(), /demo-7/);
+    }
+    assert.equal((await call('/board-data.js', { headers: { 'sec-fetch-site': 'same-origin' } })).status, 200);
     assert.equal((await call('/issues/../repos.json.log')).status, 404);
     const diff = await call(`/api/diff?id=${ID}`);
     assert.equal(diff.status, 200);
