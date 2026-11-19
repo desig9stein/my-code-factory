@@ -149,7 +149,8 @@ test('verify passes without verifier gate runs when rerunGates is false, and sti
   assert.match(step().problems.join('\n'), /The verifier has no passing run of "verify"/);
   saveWorkflow('app', { stages: { verify: { rerunGates: false } } });
   const problems = step().problems;
-  assert.deepEqual(problems, ['No verifier verdict at HEAD. The factory-verifier agent records it.']);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /^No verifier verdict at HEAD\. An independent verifier records it with/);
   addVerdict(loadState(ID), { verdict: 'pass', report: 'ok', prBodySha256: fileSha256(path.join(DIR, 'pr-body.md')) });
   assert.equal(step().moved, true);
   assert.equal(loadState(ID).stage, 'ready');
