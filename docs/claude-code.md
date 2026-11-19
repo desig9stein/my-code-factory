@@ -10,8 +10,8 @@ factory hooks
 
 It prints a JSON `hooks` object with fully quoted local paths for `PreToolUse`, `PostToolUse`, and `SessionStart`. Merge these entries into your existing Claude Code settings. Do not replace other hooks or settings. Nothing is installed automatically, and generated machine paths should stay out of Git.
 
-- Pre-tool hook: refuses supported outward actions on unapproved factory work, direct writes to protected evidence/state, and agent access to the human approval UI.
-- Post-tool hook: links transcript paths to task IDs mentioned by tool calls. It rebuilds the static board file only for those calls; the board server builds its data on request.
+- Pre-tool hook: refuses supported outward actions on unapproved factory work, direct writes to protected evidence/state, and agent access to the human approval UI. For each allowed call that runs inside a task worktree or names a task, it appends one line to that task's `activity.jsonl`: time, stage, and the tool, skill, subagent or MCP server name. A shell command is reduced to its program name (`npm`, `git`); arguments, file paths and contents are not stored.
+- Post-tool hook: links transcript paths to the tasks a call concerns (it names the task, or runs inside its worktree). It rebuilds the static board file only for those calls; the board server builds its data on request.
 - Session-start hook: summarizes tasks in flight.
 
 ## Skills and the verifier agent

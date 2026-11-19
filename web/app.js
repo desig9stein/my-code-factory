@@ -7,7 +7,9 @@
   const compact = (value) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
   const labels = { input: 'Input · uncached', cacheWrite: 'Cache write', cacheRead: 'Cache read', output: 'Output' };
   const served = Boolean(window.__factoryToken);
-  let data = { issues: [], projects: [] }, selected = null, tab = 'overview', view = 'work', scope = 'task', query = '', pending = null;
+  let data = { issues: [], projects: [] }, selected = null, tab = 'overview', view = 'work', scope = 'task', query = '', pending = null, peek = null, lost = false;
+  let mode = 'board';
+  try { if (localStorage.getItem('factory-mode') === 'list') mode = 'list'; } catch { /* Unavailable storage uses the board. */ }
   let rates = { ...DEFAULT_ASSUMPTIONS }, object = 'bulb';
   try {
     const saved = JSON.parse(localStorage.getItem('factory-scenario-v1'));
@@ -52,13 +54,14 @@
       $('detail').innerHTML = '<div class="fd-empty"><h1>Your workspace is ready.</h1><p>Register a project, then bring in a GitHub issue or pull request. Its progress, evidence, and usage will appear here.</p><pre>factory add app /path/to/app --verify "npm run verify"\nfactory new app#42</pre><p class="fd-caption">Use Projects to see registered repositories.</p></div>';
       return;
     }
-    const tabs = [['overview', 'Overview'], ['changes', 'Changes'], ['evidence', 'Evidence'], ['brief', 'Task brief'], ['usage', 'Usage']];
+    const tabs = [['overview', 'Overview'], ['changes', 'Changes'], ['evidence', 'Evidence'], ['agent', 'Agent activity'], ['brief', 'Task brief'], ['usage', 'Usage']];
     if (i.kind === 'review') tabs.splice(1, 0, ['review', 'Review draft']);
     if (!tabs.some(([key]) => key === tab)) tab = 'overview';
     const s = queueStatus(i);
     $('detail').innerHTML = `<div class="fd-head"><button class="fd-btn fd-back" data-back>← All tasks</button><div class="fd-kicker">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span class="${s.cls}">${escape(s.text)}</span>${i.tier ? `<span class="fd-muted">${escape(i.tier)} tier</span>` : ''}</div><h1>${escape(i.title)}</h1><div class="fd-branch">${escape(i.branch)} · ${escape((i.head || 'worktree missing').slice(0, 12))} · base ${escape(i.base)}</div>${progress(i)}</div><div class="fd-tabs" aria-label="Task sections">${tabs.map(([key, title]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${title}</button>`).join('')}</div><div class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served && i.approvalKey ? '<button class="fd-btn fd-primary" data-action="approve">Approve this version</button>' : ''}${served ? '<button class="fd-btn" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>${i.approvalKey ? 'Approval covers the displayed commit and draft. It does not push, merge, or post.' : 'Checks and evidence stay tied to their recorded commit.'}</small></footer>`;
     if (tab === 'usage') renderUsage(i);
     else if (tab === 'overview') renderOverview(i);
+    else if (tab === 'agent') $('body').innerHTML = agentActivity(i);
     else if (tab === 'brief') $('body').innerHTML = doc('Issue or pull request', i.docs.issue || i.docs.pr) + doc('Triage', i.docs.triage) + doc('Open questions', i.docs.questions) + doc('Plan', i.docs.plan) + doc('PR description', i.docs.prBody);
     else if (tab === 'review') $('body').innerHTML = doc('Review draft', i.docs.review);
     else if (tab === 'evidence') renderEvidence(i);
@@ -158,6 +161,54 @@
     const events = data.issues.flatMap(i => i.history.map(h => ({ ...h, id: i.id }))).sort((a, b) => b.at.localeCompare(a.at));
     $('activity').innerHTML = '<h1>Activity</h1><p class="fd-desc">Recorded stage history for tasks currently in flight.</p>' + events.map(h => `<div class="fd-project"><p>${escape(h.id)} · <strong>${escape(h.stage)}</strong></p><p>${escape(h.note)}</p><span class="fd-caption">${escape(h.at)}</span></div>`).join('');
   }
+  // Board: stages grouped by what is happening. Cards move when a stage's checks pass; they are not draggable.
+  const COLUMNS = [['understand', 'Understand', 'intake · triage · reproduce · plan'], ['build', 'Build', 'implement'], ['check', 'Check', 'gates · verify'], ['you', 'Your turn', 'ready · blocked'], ['ship', 'Ship', 'approved · PR opened']];
+  const columnOf = (i) => needsYou(i) ? 'you' : ['intake', 'triage', 'reproduce', 'plan'].includes(i.stage) ? 'understand' : ['implement', 'draft'].includes(i.stage) ? 'build' : ['gates', 'verify', 'checks'].includes(i.stage) ? 'check' : 'ship';
+  const span = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : s < 172800 ? `${Math.floor(s / 3600)} h` : `${Math.floor(s / 86400)} d`; };
+  const ago = (iso) => span(Date.now() - new Date(iso).getTime());
+  const callText = (c) => c.kind === 'mcp' ? `MCP ${c.label}${c.detail ? ` · ${c.detail}` : ''}` : c.kind === 'skill' ? `skill ${c.label}` : c.kind === 'agent' ? `${c.label} agent` : c.detail ? `${c.label}: ${c.detail}` : c.label;
+  const isActive = (i) => Boolean(i.activity.last) && Date.now() - new Date(i.activity.last.at).getTime() < i.activity.activeWindowMs;
+  // The kind is written out, so the chip colour is never the only signal.
+  const chip = (item) => `<span class="fd-chip fd-chip-${escape(item.kind)}">${escape(item.kind === 'mcp' ? `MCP ${item.label}` : item.kind === 'skill' ? `skill ${item.label}` : item.kind === 'agent' ? `${item.label} agent` : item.label)} ${number(item.count)}</span>`;
+  const liveInner = (i) => {
+    const a = i.activity;
+    if (!a.recorded) return '<span class="fd-idle"></span><span class="fd-muted">No agent activity recorded</span>';
+    return isActive(i) ? `<span class="fd-pulse"></span><span>${a.last.agent ? `${escape(a.last.agent)} agent` : 'Agent'} working · ${escape(callText(a.last))} · ${ago(a.last.at)} ago</span>` : `<span class="fd-idle"></span><span>Last agent activity ${ago(a.last.at)} ago</span>`;
+  };
+  const liveLine = (i) => `<div class="fd-live" data-live="${escape(i.id)}">${liveInner(i)}</div>`;
+  const currentStage = (i) => i.activity.byStage.find(s => s.stage === i.stage);
+  function renderBoard() {
+    if (!data.issues.length) { $('kanban').innerHTML = '<div class="fd-empty"><h1>Your workspace is ready.</h1><p>Register a project, then bring in a GitHub issue or pull request. It appears here and moves across the board as its checks pass.</p><pre>factory add app /path/to/app --verify "npm run verify"\nfactory new app#42</pre></div>'; renderDrawer(); return; }
+    const card = i => { const s = queueStatus(i), items = currentStage(i)?.items.slice(0, 5) || []; return `<button class="fd-card" data-peek="${escape(i.id)}" aria-pressed="${i.id === peek}"><span class="fd-repo"><span>${escape(i.repo)}</span><span>${i.kind === 'review' ? 'PR ' : ''}#${escape(i.issue)}</span></span><strong>${escape(i.title)}</strong><span class="fd-status ${s.cls}">${escape(needsYou(i) || failingGate(i) ? s.text : status(i))}</span><span class="fd-card-meta">${i.tier ? `${escape(i.tier)} tier · ` : ''}${ago(i.stageSince)} in stage</span>${items.length ? `<span class="fd-chips">${items.map(chip).join('')}</span>` : ''}${liveLine(i)}</button>`; };
+    $('kanban').innerHTML = COLUMNS.map(([key, title, sub]) => { const items = data.issues.filter(i => columnOf(i) === key); return `<section class="fd-col${key === 'you' ? ' fd-col-you' : ''}" aria-label="${title}"><h3><span>${title}</span><span class="fd-muted">${items.length}</span></h3><p class="fd-col-sub">${sub}</p>${items.map(card).join('') || '<p class="fd-col-empty">Nothing here.</p>'}</section>`; }).join('');
+    renderDrawer();
+  }
+  function agentActivity(i) {
+    const a = i.activity;
+    const rows = a.byStage.map(s => { const at = s.stage === i.stage, ms = (s.ms || 0) + (s.since ? Date.now() - new Date(s.since).getTime() : 0), visited = s.ms !== null || s.since; return `<div class="fd-stage${at ? ' fd-stage-now' : ''}${visited ? '' : ' fd-stage-todo'}"><div class="fd-stage-name">${escape(s.stage.replaceAll('-', ' '))}<small>${visited ? `${span(ms)}${at ? ' · now' : ''}` : ''}</small></div><div>${s.items.length ? `<div class="fd-chips">${s.items.map(chip).join('')}</div>` : `<span class="fd-muted">${visited ? 'No calls recorded' : 'Not started'}</span>`}</div></div>`; }).join('');
+    return `<div class="fd-now${isActive(i) ? ' fd-now-on' : ''}"><div class="fd-live" data-live="${escape(i.id)}">${liveInner(i)}</div><span class="fd-muted">${escape(status(i))} stage for ${ago(i.stageSince)} · ${a.recorded ? `${number(a.calls)} recorded call${a.calls === 1 ? '' : 's'}` : 'no hook has reported on this task'}</span></div><h3 class="fd-gap">Agent activity by stage</h3>${rows}<p class="fd-caption">Tool names and counts come from the session hooks of a supported harness. Command text beyond the program name, file paths and file contents are not stored. A call counts for this task when it runs inside the task worktree or names the task. No recorded activity means unknown, not idle.</p>`;
+  }
+  function renderDrawer() {
+    const i = data.issues.find(x => x.id === peek);
+    $('drawer').hidden = !i; $('board').classList.toggle('fd-board-open', Boolean(i));
+    if (!i) { showPane('list'); return; }
+    const s = queueStatus(i);
+    $('drawer').innerHTML = `<button class="fd-btn fd-back" data-close>← Board</button><div class="fd-kicker">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span class="${s.cls}">${escape(s.text)}</span>${i.tier ? `<span class="fd-muted">${escape(i.tier)} tier</span>` : ''}</div><h1>${escape(i.title)}</h1><div class="fd-actions"><button class="fd-btn fd-primary" data-open="overview">Open task</button><button class="fd-btn" data-open="changes">Read the changes</button><button class="fd-btn fd-drawer-close" data-close>Close</button></div>${i.needs.problems.length && !i.needs.canAdvance && i.stage !== 'ready' ? `<h3 class="fd-gap">What the stage still needs</h3><ul class="fd-needs">${i.needs.problems.map(p => `<li>${escape(p)}</li>`).join('')}</ul>` : ''}${agentActivity(i)}`;
+  }
+  function setMode(next) {
+    mode = next;
+    try { localStorage.setItem('factory-mode', mode); } catch { /* The choice applies for this visit only. */ }
+    document.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === mode));
+    $('board').hidden = mode !== 'board'; $('list').hidden = mode !== 'list';
+    showPane(mode === 'board' && peek ? 'detail' : 'list');
+  }
+  // Keeps "3 s ago" and the working marker current between data loads, without redrawing cards.
+  function tick() {
+    document.querySelectorAll('[data-live]').forEach(el => { const i = data.issues.find(x => x.id === el.dataset.live); if (i) el.innerHTML = liveInner(i); });
+    if (!served) return;
+    const working = data.issues.filter(isActive).length;
+    $('connection').textContent = lost ? 'Disconnected · showing last loaded data' : working ? `Live · ${working} agent${working === 1 ? '' : 's'} working` : 'Live · no agent activity in the last minute';
+  }
   function renderMetrics() {
     const m = data.metrics;
     if (!m || !m.tasks.length) { $('metrics').innerHTML = '<h1>Metrics</h1><p class="fd-desc">No implemented tasks are recorded yet. Measures appear once a task has run its gates.</p>'; return; }
@@ -168,13 +219,13 @@
       + `<div class="fd-table-wrap"><table class="fd-usage-table fd-metrics-table"><caption class="sr-only">Measures per task</caption><thead><tr>${['Task', 'Tier', 'Type', 'Stage', 'First pass', 'Failed runs', 'Verifier fails', 'Resets', 'Hours to approval', 'New tokens'].map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${m.tasks.map(t => `<tr><th scope="row">${escape(t.id)}</th><td>${na(t.tier)}</td><td>${na(t.type)}</td><td>${escape(t.stage)}</td><td>${t.firstPass === null ? na(null) : `<span class="${t.firstPass ? 'fd-pass' : 'fd-fail'}">${t.firstPass ? 'yes' : 'no'}</span>`}</td><td>${number(t.failedGateRuns)}</td><td>${number(t.verifierFails)}</td><td>${number(t.resets)}</td><td>${na(t.hoursToApproval, v => number(v, 1))}</td><td>${na(t.freshTokens, v => compact(v) + (t.tokensPartial ? ' · partial' : ''))}</td></tr>`).join('')}</tbody></table></div>`
       + '<p class="fd-caption">“n/a” means no data, not zero. These describe recorded work in this factory; they are not a productivity comparison.</p>';
   }
-  function render() { renderQueue(); renderDetail(); renderProjects(); renderActivity(); renderMetrics(); }
+  function render() { renderQueue(); renderDetail(); renderBoard(); renderProjects(); renderActivity(); renderMetrics(); tick(); }
   const views = ['work', 'projects', 'activity', 'metrics'];
   document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => {
     view = button.dataset.view;
     document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', b === button));
     views.forEach(id => { $(id).hidden = id !== view; });
-    $('view-title').textContent = button.textContent;
+    $('view-title').textContent = button.textContent; $('mode').hidden = view !== 'work';
   });
   // On a small screen the queue and the detail are separate screens.
   const showPane = (pane) => { document.body.dataset.pane = pane; };
@@ -185,9 +236,19 @@
     renderQueue(); renderDetail(); showPane('detail');
     if (matchMedia('(max-width:680px)').matches) { $('detail').focus(); scrollTo(0, 0); }
   };
+  document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  $('kanban').onclick = e => {
+    const card = e.target.closest('[data-peek]'); if (!card) return;
+    peek = card.dataset.peek; renderBoard(); showPane('detail'); $('drawer').focus({ preventScroll: true });
+  };
+  $('drawer').onclick = e => {
+    if (e.target.closest('[data-close]')) { const id = peek; peek = null; renderBoard(); document.querySelector(`[data-peek="${CSS.escape(id)}"]`)?.focus(); return; }
+    const open = e.target.closest('[data-open]'); if (!open) return;
+    selected = peek; tab = open.dataset.open; scope = 'task'; setMode('list'); renderQueue(); renderDetail(); showPane('detail'); $('detail').focus({ preventScroll: true });
+  };
   $('detail').addEventListener('toggle', e => { if (e.target.open && e.target.dataset?.log) loadLog(e.target); }, true);
   $('detail').onclick = e => {
-    if (e.target.closest('[data-back]')) { showPane('list'); document.querySelector(`[data-task="${CSS.escape(selected)}"]`)?.focus(); return; }
+    if (e.target.closest('[data-back]')) { showPane('list'); if (peek) { setMode('board'); document.querySelector(`[data-peek="${CSS.escape(peek)}"]`)?.focus(); return; } document.querySelector(`[data-task="${CSS.escape(selected)}"]`)?.focus(); return; }
     const button = e.target.closest('[data-tab]');
     if (button) { tab = button.dataset.tab; renderDetail(); document.querySelector(`.fd-tabs [data-tab="${tab}"]`)?.focus(); }
     const action = e.target.closest('[data-action]');
@@ -227,12 +288,13 @@
     catch { notice('Clipboard unavailable. Select and copy the command shown in the dialog.'); }
   };
   window.__factoryData = next => {
-    $('connection').textContent = served ? 'Connected · local server' : 'Static snapshot';
+    lost = false; if (!served) $('connection').textContent = 'Static snapshot';
     if (next.stamp === data.stamp) return;
     // Keep drafts and open explanations stable while the user interacts. Diff files stay open by design.
     if (data.stamp && (document.querySelector('dialog[open], #detail details[open]:not(.fd-keep)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;
     data = next;
     // Opens on the task that waits for the user, when there is one.
+    if (!data.issues.some(i => i.id === peek)) peek = null;
     if (!data.issues.some(i => i.id === selected)) selected = (data.issues.find(i => i.stage === 'ready' && !i.blocked) || data.issues.find(needsYou) || data.issues[0])?.id || null;
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()} · usage may lag up to 60 s`;
     render();
@@ -240,8 +302,14 @@
   function refresh() {
     const script = document.createElement('script'); script.src = `board-data.js?t=${Date.now()}`;
     script.onload = () => script.remove();
-    script.onerror = () => { script.remove(); $('connection').textContent = 'Disconnected · showing last loaded data'; };
+    script.onerror = () => { script.remove(); lost = true; tick(); };
     document.body.appendChild(script);
   }
-  if (served) setInterval(refresh, 10000);
+  setMode(mode);
+  setInterval(tick, 5000);
+  if (served) {
+    // The server announces changes to task data; the slower poll also catches commits in the worktrees.
+    setInterval(refresh, 10000);
+    if (window.EventSource) new EventSource('/api/events').addEventListener('change', refresh);
+  }
 })();

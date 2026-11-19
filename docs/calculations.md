@@ -2,7 +2,7 @@
 
 ## Token source
 
-The current adapter reads linked Claude Code JSONL transcripts. It deduplicates lines by message ID inside each file. Main-session messages count only when tool-call content names the task ID; matching subagent transcripts count their usage within the task's creation-to-archive window. Other conversation is omitted. A per-session value is that session's contribution to the selected task, not total session usage across all work.
+The current adapter reads linked Claude Code JSONL transcripts. It deduplicates lines by message ID inside each file. Main-session messages count when tool-call content names the task ID, or when the hooks recorded that call (by its tool-call id) as running inside the task worktree; matching subagent transcripts count their usage within the task's creation-to-archive window. Other conversation is omitted. A per-session value is that session's contribution to the selected task, not total session usage across all work.
 
 `fresh = input + cacheWrite + output`; `total = fresh + cacheRead`.
 

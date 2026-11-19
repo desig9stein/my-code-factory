@@ -254,6 +254,21 @@ test('the board says what the stage needs, and how large the change is, without 
   assert.equal(fs.readFileSync(path.join(ISSUE, 'state.json'), 'utf8'), before);
 });
 
+test('the pre-tool hook records an allowed call for the task and skips a refused one', () => {
+  const hook = (payload) => spawnSync('node', [path.join(path.dirname(BIN), 'guard.mjs'), 'pre'], { input: JSON.stringify(payload), encoding: 'utf8' });
+  const log = path.join(ISSUE, 'activity.jsonl');
+  const lines = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const before = lines().length;
+  assert.equal(hook({ cwd: WT, tool_name: 'Bash', tool_use_id: 'toolu_a', tool_input: { command: 'npm test -- --secret-flag' } }).stdout, '');
+  assert.match(hook({ cwd: WT, tool_name: 'Bash', tool_input: { command: 'git push -u origin HEAD' } }).stdout, /"deny"/);
+  assert.equal(hook({ cwd: WORKSPACE, tool_name: 'Read', tool_input: { file_path: '/elsewhere/file' } }).status, 0);
+  const added = lines().slice(before);
+  assert.deepEqual(added.map((l) => [l.stage, l.kind, l.label, l.detail, l.use]), [['gates', 'tool', 'Bash', 'npm', 'toolu_a']]);
+  const activity = boardData().issues.find((i) => i.id === ID).activity;
+  assert.equal(activity.recorded, true);
+  assert.equal(activity.byStage.find((s) => s.stage === 'gates').items[0].label, 'Bash');
+});
+
 test('a gate runs only the registry command', () => {
   const r = cli('run', ID, 'test', '--', 'true');
   assert.equal(r.status, 1);
@@ -477,6 +492,24 @@ test('the board server archives only with its token and its own host', async () 
       assert.doesNotMatch(await foreign.text(), /demo-7/);
     }
     assert.equal((await call('/board-data.js', { headers: { 'sec-fetch-site': 'same-origin' } })).status, 200);
+    // The event stream announces a change to task data, and is closed to other sites.
+    assert.equal((await call('/api/events', { headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
+    const announced = await new Promise((resolve, reject) => {
+      let request = null;
+      const timer = setTimeout(() => { request?.destroy(); reject(new Error('no change event within 5 s')); }, 5000);
+      request = http.get({ host: '127.0.0.1', port, path: '/api/events' }, (res) => {
+        assert.match(res.headers['content-type'], /text\/event-stream/);
+        res.setEncoding('utf8');
+        let seen = '';
+        res.on('data', (chunk) => {
+          seen += chunk;
+          if (seen.includes('retry:') && !seen.includes('event:')) fs.writeFileSync(path.join(ISSUE, 'notes.md'), `seen ${Date.now()}\n`);
+          if (seen.includes('event: change')) { clearTimeout(timer); request.destroy(); resolve(true); }
+        });
+      });
+      request.on('error', () => {});
+    });
+    assert.equal(announced, true);
     assert.equal((await call('/issues/../repos.json.log')).status, 404);
     const diff = await call(`/api/diff?id=${ID}`);
     assert.equal(diff.status, 200);
@@ -499,6 +532,7 @@ test('the board server archives only with its token and its own host', async () 
     assert.equal(loadState(ID).archived, true);
     assert.equal(boardData().issues.length, 0);
   } finally {
+    server.closeAllConnections();
     server.close();
   }
 });
