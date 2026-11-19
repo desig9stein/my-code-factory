@@ -35,7 +35,8 @@ const HELP = `Software factory
   run <id> reproduce --expect-fail -- <command>        Record a command that shows the bug
   run <id> extra:<label> -- <command>                  Record any other check, such as another browser
   note <id> reproduce|regress <text>                   Record a manual check where no command can
-  regress <id> --tests <a,b> [--as verifier] -- <cmd>  Prove the test fails on base and passes on the fix
+  regress <id> --tests <a,b> [--as verifier] [--expect-output <text>] -- <cmd>
+                                                       Prove the test fails on base (showing <text>) and passes on the fix
   check <id>                                           Check the commits and pr-body.md
   verdict <id> pass|fail --report <file>               Verifier only: record the verdict and report
   advance <id>                                         Check the stage exit rule and move on
@@ -48,12 +49,18 @@ const HELP = `Software factory
   doctor                                               Compare the registry with the repos
 `;
 
+// One argument after "--" is a whole shell command; several are rejoined with their quoting restored.
+function commandLine(parts) {
+  if (parts.length <= 1) return parts[0] || '';
+  return parts.map((p) => (/^[\w@%+=:,./-]+$/.test(p) ? p : `'${p.replaceAll("'", "'\\''")}'`)).join(' ');
+}
+
 function parseArgs(argv) {
   const out = { _: [], rest: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') {
-      out.rest = argv.slice(i + 1).join(' ');
+      out.rest = commandLine(argv.slice(i + 1));
       break;
     }
     if (a.startsWith('--')) {
@@ -141,7 +148,7 @@ const commands = {
     const baseSha = git(repo.dir, 'rev-parse', `origin/${repo.baseBranch}`);
     const branch =
       args.branch ||
-      repo.branchPattern.replace('{type}', type).replace('{n}', number).replace('{slug}', slugify(issue.title));
+      repo.branchPattern.replace('{type}', type).replace('{n}', number).replace('{slug}', slugify(issue.title) || 'issue');
     const worktree = path.join(worktreesDir(), id);
     fs.mkdirSync(worktreesDir(), { recursive: true });
     // No upstream, so a bare "git push" cannot target the base branch.
@@ -275,11 +282,11 @@ const commands = {
       const gate = repo.gates.find((g) => g.name === name);
       if (!gate) throw new Error(`"${name}" is not a gate of ${repo.key}. Gates: ${repo.gates.map((g) => g.name).join(', ')}. Other checks use the name extra:<label>.`);
       if (args.rest) throw new Error('A gate always runs the registry command; remove the text after "--".');
-      spec = { name, kind: 'gate', cmd: gate.cmd, cwd: subdirOf(state.worktree, gate.cwd) };
+      spec = { name, kind: 'gate', cmd: gate.cmd, cwd: subdirOf(state.worktree, gate.cwd), timeoutMinutes: gate.timeoutMinutes };
     }
     if (!spec.cmd) throw new Error(`${repo.key} has no ${name} command in the registry.`);
     console.log(`$ ${spec.cmd}   (in ${spec.cwd})`);
-    const record = runRecorded(state, { ...spec, actor });
+    const record = runRecorded(state, { ...spec, actor, timeoutMinutes: spec.timeoutMinutes ?? repo.timeoutMinutes });
     printRecord(state, record);
     writeBoard();
     if (!record.ok) process.exitCode = 1;
@@ -300,8 +307,13 @@ const commands = {
     const repo = getRepo(state.repo);
     const tests = String(args.tests || '').split(',').map((t) => t.trim()).filter(Boolean);
     const actor = args.as === 'verifier' ? 'verifier' : 'implementer';
-    const result = regress(state, repo, { tests, cmd: args.rest, subdir: args.cwd || '', actor });
-    console.log(`Base ${result.baseSha.slice(0, 8)} with the new tests: exit ${result.base.exitCode} (${result.base.ok ? 'fails as required' : 'PASSES, so the test does not cover the fix'})`);
+    const match = typeof args['expect-output'] === 'string' ? args['expect-output'] : null;
+    const result = regress(state, repo, { tests, cmd: args.rest, subdir: args.cwd || '', actor, match });
+    console.log(`Base ${result.baseSha.slice(0, 8)} with the new tests: exit ${result.base.exitCode} (${result.base.ok ? 'fails as required' : result.base.exitCode === 0 ? 'PASSES, so the test does not cover the fix' : result.base.timedOut ? 'TIMED OUT' : `fails, but its output lacks "${match}"`})`);
+    if (result.base.exitCode !== 0) {
+      const tail = fs.readFileSync(path.join(issueDir(state.id), 'evidence', result.base.log), 'utf8').trimEnd().split('\n').slice(-8).join('\n  ');
+      console.log(`  Why the base fails (check that it is the bug and not a missing import):\n  ${tail}`);
+    }
     console.log(`Fix  ${head(state).slice(0, 8)}: exit ${result.fix.exitCode} (${result.fix.ok ? 'passes' : 'FAILS'})`);
     writeBoard();
     if (!result.base.ok || !result.fix.ok) process.exitCode = 1;
@@ -404,15 +416,18 @@ const commands = {
     const pidFile = path.join(factoryRoot(), `.board-${boardPort()}.pid`);
     const url = `http://127.0.0.1:${boardPort()}/`;
     // Resolves to the factory root the server on this port serves, or null when nothing answers.
-    const servedRoot = () => fetch(`${url}api/ping`).then((r) => r.json()).then((j) => j.root || 'other').catch(() => null);
+    const ping = () => fetch(`${url}api/ping`).then((r) => r.json()).catch(() => null);
+    const servedRoot = () => ping().then((j) => (j ? j.root || 'other' : null));
     const up = async () => (await servedRoot()) === factoryRoot();
     if (args.stop) {
-      if (fs.existsSync(pidFile)) {
-        try {
-          process.kill(Number(fs.readFileSync(pidFile, 'utf8')));
-        } catch {}
-        fs.rmSync(pidFile);
-      }
+      // Kills only the process that answers on the port as this factory's board; a stale PID file may name anything.
+      const live = await ping();
+      const recorded = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) : null;
+      fs.rmSync(pidFile, { force: true });
+      if (!live || live.root !== factoryRoot()) return console.log(`No board of this factory answers on port ${boardPort()}; nothing was stopped.`);
+      const pid = Number.isInteger(live.pid) ? live.pid : recorded;
+      if (!pid) return console.log('The running board does not report its process id. Stop it from the terminal that started it.');
+      process.kill(pid);
       return console.log('Board server stopped.');
     }
     if (args.static) {

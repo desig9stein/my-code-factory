@@ -30,14 +30,16 @@ try {
     const states = listStates();
     const text = `${input.cwd || ''} ${JSON.stringify(input.tool_input || {})}`;
     // Links this session to every issue the tool call names or runs inside.
-    for (const s of states) if (namesId(text, s.id)) linkSession(s.id, input.transcript_path);
-    if (inWorkspace(input.cwd) && states.length) writeBoard();
+    const touched = states.filter((s) => namesId(text, s.id));
+    for (const s of touched) linkSession(s.id, input.transcript_path);
+    // The static board file is rebuilt only when a call concerned a task; the server builds its own data on request.
+    if (touched.length) writeBoard();
   } else if (mode === 'session') {
     const states = inWorkspace(input.cwd) ? listStates() : [];
     if (states.length) {
       const lines = states.map((s) => `- ${s.id}: ${s.blocked ? 'blocked' : s.stage} (branch ${s.branch}, worktree ${s.worktree})`);
       process.stdout.write(
-        `Software factory, issues in flight:\n${lines.join('\n')}\nUse "factory status <id>" for detail. Work on these only through the /factory skill.\n`,
+        `Software factory, issues in flight:\n${lines.join('\n')}\nUse "factory status <id>" for detail and "factory advance <id>" to see what the current stage needs.\n`,
       );
     }
   }

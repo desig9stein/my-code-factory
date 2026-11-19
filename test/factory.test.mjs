@@ -168,6 +168,27 @@ test('a recorded command cannot leave the worktree', () => {
   assert.match(cli('regress', ID, '--tests', 'test/smoke.test.mjs', '--cwd', '..', '--', 'true').out, /leaves the worktree/);
 });
 
+test('arguments after "--" keep their quoting', () => {
+  const r = cli('run', ID, 'extra:quoting', '--', 'node', '-e', 'console.log(6 * 7)');
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /^42$/m);
+});
+
+test('a title with no Latin letters still yields a usable branch', () => {
+  const r = cli('new', 'demo#9', '--title', 'Първа задача');
+  assert.equal(r.status, 0, r.out);
+  assert.equal(loadState('demo-9').branch, 'me/fix-9-issue');
+  assert.equal(cli('archive', 'demo-9', '--delete-branch').status, 0);
+});
+
+test('a command that outlives its time limit is recorded as failed, not left hanging', async () => {
+  const { runRecorded } = await import('../lib/evidence.mjs');
+  const record = runRecorded(loadState(ID), { name: 'extra:slow', kind: 'run', cmd: 'exec sleep 20', cwd: WT, expect: 'fail', timeoutMinutes: 0.002 });
+  assert.equal(record.timedOut, true);
+  assert.equal(record.ok, false);
+  assert.match(fs.readFileSync(path.join(ISSUE, 'evidence', record.log), 'utf8'), /Stopped after/);
+});
+
 test('a reproduction that exits 0 does not count', () => {
   cli('run', ID, 'reproduce', '--expect-fail', '--', 'true');
   assert.match(cli('advance', ID).out, /did not show the bug/);
@@ -210,12 +231,16 @@ test('regress rejects a test that passes on the base', () => {
   const r = cli('regress', ID, '--tests', 'test/add.test.mjs', '--', 'node --test test/smoke.test.mjs');
   assert.equal(r.status, 1);
   assert.match(r.out, /does not cover the fix/);
+  const wrongReason = cli('regress', ID, '--tests', 'test/add.test.mjs', '--expect-output', 'text the failure never prints', '--', 'node --test test/add.test.mjs');
+  assert.equal(wrongReason.status, 1);
+  assert.match(wrongReason.out, /output lacks/);
   assert.match(cli('advance', ID).out, /Regression proof is failed/);
 });
 
 test('regress passes when the test fails on the base and passes on the fix', () => {
-  const r = cli('regress', ID, '--tests', 'test/add.test.mjs', '--', 'node --test test/add.test.mjs');
+  const r = cli('regress', ID, '--tests', 'test/add.test.mjs', '--expect-output', 'strictly equal', '--', 'node --test test/add.test.mjs');
   assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /Why the base fails/);
   assert.equal(fs.existsSync(path.join(ROOT, 'worktrees', `.regress-${ID}`)), false);
   assert.equal(cli('advance', ID).status, 0);
   assert.equal(loadState(ID).stage, 'verify');
@@ -237,6 +262,16 @@ test('the PR body must carry the sections the repo CI checks', () => {
   assert.match(r.out, /"## Summary" is missing/);
   write(path.join(ISSUE, 'pr-body.md'), PR_BODY);
   assert.equal(cli('check', ID).status, 0);
+});
+
+test('a verdict recorded on a dirty tree does not count', () => {
+  for (const g of runGates('--as', 'verifier')) assert.equal(g.status, 0, g.out);
+  write(path.join(WT, 'stray.txt'), 'x');
+  assert.equal(verdict().status, 0);
+  fs.rmSync(path.join(WT, 'stray.txt'));
+  const r = cli('advance', ID);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /uncommitted changes, so it does not describe the commit/);
 });
 
 test('a PR body edited after the verdict needs a new verdict', () => {
@@ -327,6 +362,14 @@ test('board writes the page and a data file with every issue', () => {
   assert.equal(cli('board', '--static', '--no-open').status, 0);
   assert.ok(fs.existsSync(path.join(ROOT, 'board.html')));
   assert.match(fs.readFileSync(path.join(ROOT, 'board-data.js'), 'utf8'), /^window\.__factoryData\(\{.*"id":"demo-7"/);
+  // The post-tool hook rebuilds the file only for calls that concern a task.
+  const data = path.join(ROOT, 'board-data.js');
+  const hook = (command) => spawnSync('node', [path.join(path.dirname(BIN), 'guard.mjs'), 'post'], { input: JSON.stringify({ cwd: WORKSPACE, tool_input: { command } }), encoding: 'utf8' });
+  fs.utimesSync(data, new Date(0), new Date(0));
+  assert.equal(hook('ls -la').status, 0);
+  assert.equal(fs.statSync(data).mtimeMs, 0);
+  assert.equal(hook(`factory status ${ID}`).status, 0);
+  assert.notEqual(fs.statSync(data).mtimeMs, 0);
 });
 
 test('tokens count the calls that acted on the issue once each, plus its subagents', async () => {
@@ -356,6 +399,7 @@ test('the board server archives only with its token and its own host', async () 
       http.get({ host: '127.0.0.1', port, path: '/', headers: { host: 'evil.test' } }, (res) => resolve(res.statusCode));
     });
     assert.equal(otherHost, 403);
+    assert.equal((await (await call('/api/ping')).json()).pid, process.pid);
     const page = await (await call('/')).text();
     const token = /__factoryToken="([0-9a-f]{32})"/.exec(page)?.[1];
     assert.ok(token);
