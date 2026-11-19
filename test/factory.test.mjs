@@ -251,6 +251,9 @@ test('the board says what the stage needs, and how large the change is, without 
   assert.match(issue.needs.problems.join('\n'), /Regression proof is missing/);
   assert.deepEqual(issue.changes, { files: 2, additions: 5, deletions: 1 });
   assert.equal(data.metrics.tasks.some((t) => t.id === ID), true);
+  // Two registry entries share the demo repository; neither declares a relationship, so nothing is reached.
+  assert.deepEqual(data.graph.nodes.map((n) => [n.key, n.layer, n.reach.length]), [['demo', 0, 0], ['broken', 0, 0]]);
+  assert.deepEqual(issue.reach, []);
   assert.equal(fs.readFileSync(path.join(ISSUE, 'state.json'), 'utf8'), before);
 });
 

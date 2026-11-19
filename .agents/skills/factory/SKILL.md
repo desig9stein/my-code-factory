@@ -20,7 +20,7 @@ The `factory` CLI owns state and evidence. You write code, documents and commits
 1. **Intake.** `factory status <id>` shows the worktree. Work only inside it. Read `issue.md` in the task's data folder.
 2. **Triage.** Write `triage.md` with `Type: bug|feature|docs|chore`, `Scope:` and `Verdict: clear|unclear`. Add `Tier: trivial` only for a clear change of one or two files; it skips reproduce and plan. If the issue is unclear, write `questions.md` and stop: the task blocks until the user answers.
 3. **Reproduce (bugs).** `factory run <id> reproduce --expect-fail -- <command>`. The command must fail because of the bug.
-4. **Plan.** Write `plan.md` with `## Acceptance criteria` (a list of observable results), `## Files`, `## Tests`, `## Consumer impact`, `## Changelog`. Keep it to one page.
+4. **Plan.** Write `plan.md` with `## Acceptance criteria` (a list of observable results), `## Files`, `## Tests`, `## Consumer impact`, `## Changelog`. Run `factory graph <project>` first: under `## Consumer impact`, name each project that uses this one directly and say what happens to it, or why it is unaffected. Keep it to one page.
 5. **Implement.** Write the failing test first, then the fix. Commit with Conventional Commits and a scope.
 6. **Gates.** `factory run <id> <gate>` for every gate. For a bug, prove the test: `factory regress <id> --tests <paths> --expect-output "<text of the failure>" -- <test command>`.
 7. **Verify.** Write `pr-body.md`, run `factory check <id>`, then hand the task to an independent verifier (the `factory-verifier` agent, or the `factory-verify` skill in a fresh session). Do not record the verdict yourself.
