@@ -18,6 +18,7 @@ const ISSUE = path.join(ROOT, 'issues', ID);
 const PR_JSON = path.join(tmp, 'pr.json');
 
 // Lets nested "node --test" runs report their own exit code.
+delete process.env.FACTORY_PORT;
 delete process.env.NODE_TEST_CONTEXT;
 Object.assign(process.env, {
   FACTORY_ROOT: ROOT,

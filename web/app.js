@@ -252,8 +252,10 @@
   }
   // The same relationships as an indented list, for small screens and screen readers that skip the drawing.
   function graphTree() {
-    const leaf = (n, label, trail) => `<li><button class="fd-leaf" data-node="${escape(n.key)}" aria-pressed="${n.key === mapSel}"><strong>${escape(n.key)}</strong><span class="fd-muted">${escape(n.description || 'No description yet')}${label ? ` · ${escape(label)}` : ''}</span>${data.issues.filter(i => i.repo === n.key).map(i => { const s = queueStatus(i); return `<span class="${s.cls}">#${escape(i.issue)} · ${escape(s.text)}</span>`; }).join('')}</button>${n.usedBy.length && !trail.includes(n.key) ? `<ul>${n.usedBy.map(u => leaf(node(u), node(u).dependsOn.find(d => d.key === n.key).label, [...trail, n.key])).join('')}</ul>` : ''}</li>`;
-    return `<ul class="fd-tree">${data.graph.nodes.filter(n => !n.dependsOn.length).map(n => leaf(n, '', [])).join('')}</ul>`;
+    // A project used by several others appears under each, but its own users are listed only once.
+    const expanded = new Set();
+    const leaf = (n, label) => { const again = expanded.has(n.key); expanded.add(n.key); return `<li><button class="fd-leaf" data-node="${escape(n.key)}" aria-pressed="${n.key === mapSel}"><strong>${escape(n.key)}</strong><span class="fd-muted">${escape(n.description || 'No description yet')}${label ? ` · ${escape(label)}` : ''}${again && n.usedBy.length ? ' · its users are listed above' : ''}</span>${data.issues.filter(i => i.repo === n.key).map(i => { const s = queueStatus(i); return `<span class="${s.cls}">#${escape(i.issue)} · ${escape(s.text)}</span>`; }).join('')}</button>${n.usedBy.length && !again ? `<ul>${n.usedBy.map(u => leaf(node(u), node(u).dependsOn.find(d => d.key === n.key).label)).join('')}</ul>` : ''}</li>`; };
+    return `<ul class="fd-tree">${data.graph.nodes.filter(n => !n.dependsOn.length).map(n => leaf(n, '')).join('')}</ul>`;
   }
   const miniTask = i => { const s = queueStatus(i); return `<button class="fd-mini-task" data-open-task="${escape(i.id)}"><span class="fd-muted">${escape(i.repo)} #${escape(i.issue)}</span><span>${escape(i.title)}</span><span class="${s.cls}">${escape(s.text)}</span></button>`; };
   const nodeLink = key => `<button class="fd-textlink" data-node="${escape(key)}">${escape(key)}</button>`;
@@ -322,6 +324,7 @@
     const card = e.target.closest('[data-peek]'); if (!card) return;
     peek = card.dataset.peek; renderBoard(); showPane('detail'); $('drawer').focus({ preventScroll: true });
   };
+  $('drawer').onkeydown = e => { if (e.key === 'Escape') $('drawer').querySelector('[data-close]')?.click(); };
   $('drawer').onclick = e => {
     if (e.target.closest('[data-close]')) { const id = peek; peek = null; renderBoard(); document.querySelector(`[data-peek="${CSS.escape(id)}"]`)?.focus(); return; }
     const open = e.target.closest('[data-open]'); if (!open) return;
@@ -383,6 +386,8 @@
     try { await navigator.clipboard.writeText($('new-command').textContent); notice('Task command copied. Run it in your terminal.'); }
     catch { notice('Clipboard unavailable. Select and copy the command shown in the dialog.'); }
   };
+  // The server could not build the board data, for example because repos.json is damaged.
+  window.__factoryError = message => { lost = false; notice(`The board data could not be loaded: ${message}`); if (served) $('connection').textContent = 'Connected · data unavailable'; };
   window.__factoryData = next => {
     lost = false; if (!served) $('connection').textContent = 'Static snapshot';
     if (next.stamp === data.stamp) return;
@@ -393,6 +398,8 @@
     if (!data.issues.some(i => i.id === peek)) peek = null;
     if (!data.issues.some(i => i.id === selected)) selected = (data.issues.find(i => i.stage === 'ready' && !i.blocked) || data.issues.find(needsYou) || data.issues[0])?.id || null;
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()} · usage may lag up to 60 s`;
+    const skipped = data.skipped || [];
+    notice(skipped.length ? `${skipped.length} task${skipped.length === 1 ? '' : 's'} could not be shown. ${skipped.map(s => `${s.id}: ${s.reason}`).join(' ')}` : '');
     render();
   };
   function refresh() {

@@ -87,11 +87,25 @@ test('the project graph orders what a change reaches, reports bad links and sugg
   assert.deepEqual(reach(graph, 'react'), []);
   const covered = coverage(graph, 'theming', '- angular: visual check.\n- ui-webcomponents: regenerate CSS.\n');
   assert.deepEqual(covered.map((r) => [r.key, r.mentioned]), [['angular', true], ['wc', true], ['blazor', false], ['react', false]]);
+  // A project reached along many paths is listed once, at its longest distance, and the work stays small.
+  const wide = { repos: { root: {} } };
+  for (let i = 0; i < 60; i++) wide.repos[`n${i}`] = { dependsOn: i ? [`n${i - 1}`, i > 5 ? `n${i - 5}` : 'root'] : ['root'] };
+  const started = Date.now();
+  const far = reach(buildGraph(wide), 'root');
+  assert.equal(far.length, 60);
+  assert.deepEqual(far.at(-1), { key: 'n59', depth: 60, via: 'n58' });
+  assert.ok(Date.now() - started < 1000);
   // An unknown project and a cycle are reported, and the offending links are left out.
   const broken = buildGraph({ repos: { a: { dependsOn: ['b', 'ghost'] }, b: { dependsOn: ['a'] } } });
   assert.match(broken.problems.join('\n'), /"ghost", which is not a registered project/);
   assert.match(broken.problems.join('\n'), /Cycle: /);
   assert.equal(broken.nodes.reduce((n, x) => n + x.dependsOn.length, 0), 1);
+  // Entries of the wrong shape are reported once each and never crash the graph.
+  const junk = buildGraph({ repos: { a: { dependsOn: 'not-a-list', description: { nested: true } }, b: { dependsOn: [null, 42, { project: 'a', label: '<b>x</b>' }, { project: 'a' }, 'b'] } } });
+  assert.equal(junk.nodes.find((n) => n.key === 'a').description, '');
+  assert.deepEqual(junk.nodes.find((n) => n.key === 'b').dependsOn, [{ key: 'a', label: '<b>x</b>' }]);
+  assert.equal(junk.problems.filter((p) => /neither a project key/.test(p)).length, 2);
+  assert.equal(junk.problems.filter((p) => /cannot depend on itself/.test(p)).length, 1);
   // Manifests: react lists a package that wc publishes from a nested folder.
   const write = (file, json) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(json)); };
   process.env.FACTORY_WORKSPACE = ws;
@@ -120,4 +134,10 @@ test('graph and doctor print relationships, and add refuses an unregistered depe
   assert.match(cli('graph').stdout, /base2 - Shared base\n\s+└─ app2 \(uses helpers\)/);
   assert.match(cli('graph', 'base2').stdout, /a change here reaches 1 project, in this order:\n\s+1\. app2/);
   assert.equal(JSON.parse(cli('graph', '--json').stdout).nodes.find((n) => n.key === 'base2').reach[0].key, 'app2');
+  // A project with two dependencies appears under both, and its own users are printed once.
+  for (let i = 0; i < 30; i++) registry.repos[`m${i}`] = { dir: 'lib-app', remote: `x/m${i}`, baseBranch: 'main', dependsOn: i ? [`m${i - 1}`, i > 1 ? `m${i - 2}` : 'app2'] : ['app2'] };
+  fs.writeFileSync(path.join(root, 'repos.json'), JSON.stringify(registry));
+  const tree = cli('graph').stdout;
+  assert.ok(tree.split('\n').length < 100, `tree has ${tree.split('\n').length} lines`);
+  assert.match(tree, /its users are listed above/);
 });

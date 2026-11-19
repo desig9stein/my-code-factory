@@ -17,6 +17,8 @@ const ID = 'demo-7';
 const WT = path.join(ROOT, 'worktrees', ID);
 const ISSUE = path.join(ROOT, 'issues', ID);
 
+// A board port exported in the developer's shell must not change what the tests expect.
+delete process.env.FACTORY_PORT;
 // Lets nested "node --test" runs report their own exit code.
 delete process.env.NODE_TEST_CONTEXT;
 Object.assign(process.env, {
@@ -454,6 +456,10 @@ test('board writes the page and a data file with every issue', () => {
   assert.equal(fs.statSync(data).mtimeMs, 0);
   assert.equal(hook(`factory status ${ID}`).status, 0);
   assert.notEqual(fs.statSync(data).mtimeMs, 0);
+  // A second task call right after does not rebuild it again: the rewrite is limited to twice a minute.
+  const fresh = fs.statSync(data).mtimeMs;
+  assert.equal(hook(`factory status ${ID}`).status, 0);
+  assert.equal(fs.statSync(data).mtimeMs, fresh);
 });
 
 test('tokens count the calls that acted on the issue once each, plus its subagents', async () => {
@@ -538,4 +544,41 @@ test('the board server archives only with its token and its own host', async () 
     server.closeAllConnections();
     server.close();
   }
+});
+
+test('one damaged task or a removed project is reported and does not hide the other tasks', async () => {
+  const { describeCall, readActivity } = await import('../lib/activity.mjs');
+  assert.equal(cli('new', 'demo#30', '--title', 'Healthy task').status, 0);
+  assert.equal(cli('new', 'demo#31', '--title', 'Task to damage').status, 0);
+  const file = path.join(ROOT, 'issues', 'demo-31', 'state.json');
+  const good = fs.readFileSync(file, 'utf8');
+  write(file, '{broken');
+  let data = boardData();
+  assert.deepEqual(data.issues.map((i) => i.id), ['demo-30']);
+  assert.match(data.skipped.find((s) => s.id === 'demo-31').reason, /cannot be read/);
+  const listed = cli('status');
+  assert.equal(listed.status, 0);
+  assert.match(listed.out, /! demo-31: The state of demo-31 cannot be read/);
+  assert.match(listed.out, /demo-30/);
+  // The task's project disappears from the registry.
+  write(file, good.replace('"repo": "demo"', '"repo": "gone"'));
+  data = boardData();
+  assert.deepEqual(data.issues.map((i) => i.id), ['demo-30']);
+  assert.match(data.skipped.find((s) => s.id === 'demo-31').reason, /Unknown repo "gone"/);
+  assert.match(cli('status').out, /project "gone" is not in the registry/);
+  write(file, good);
+  // Unreadable activity lines are ignored; hostile tool names are reduced to plain words.
+  write(path.join(ROOT, 'issues', 'demo-30', 'activity.jsonl'), 'garbage\n{"at":"not a date","stage":"intake","kind":"tool","label":"x"}\n{"kind":5}\n');
+  assert.deepEqual(readActivity('demo-30'), []);
+  assert.equal(boardData().issues.find((i) => i.id === 'demo-30').activity.recorded, false);
+  assert.equal(describeCall({ tool_name: '<img src=x onerror=alert(1)>', tool_input: {} }).label, 'img srcx onerroralert1');
+  assert.equal(describeCall({ tool_name: 'Skill', tool_input: { skill: { nested: true } } }).label, 'skill');
+  assert.equal(describeCall({ tool_name: 'Bash', tool_input: { command: ['not', 'a', 'string'] } }).detail, '');
+  // A damaged registry is named as the problem.
+  const registry = path.join(ROOT, 'repos.json');
+  const kept = fs.readFileSync(registry, 'utf8');
+  write(registry, '{');
+  assert.match(cli('graph').out, /repos\.json is not valid JSON/);
+  write(registry, kept);
+  for (const id of ['demo-30', 'demo-31']) assert.equal(cli('archive', id, '--delete-branch').status, 0);
 });

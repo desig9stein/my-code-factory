@@ -20,7 +20,7 @@ import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
 import { acceptanceCriteria, advance, approve, archive, consumerImpact, gateStatus, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
 import { formatTokens, issueTokens } from '../lib/tokens.mjs';
-import { exists, head, isDirty, listStates, loadState, move, saveState, sync } from '../lib/state.mjs';
+import { exists, head, isDirty, listStates, loadState, move, saveState, sync, unreadableStates } from '../lib/state.mjs';
 
 const HELP = `Software factory
 
@@ -251,9 +251,11 @@ const commands = {
   status(args) {
     if (args._[0]) return statusOne(loadState(args._[0]));
     const states = listStates();
+    for (const u of unreadableStates()) console.error(`! ${u.id}: ${u.reason}`);
     if (!states.length) return console.log('No issues in flight.');
     const registry = loadRegistry();
     const rows = states.map((s) => {
+      if (!registry.repos[s.repo]) return [s.id, s.blocked ? 'BLOCKED' : s.stage, age(s.stageSince), '?', `project "${s.repo}" is not in the registry`, s.branch];
       const repo = getRepo(s.repo, registry);
       const gates = gateStatus(s, repo);
       const passed = gates.filter((g) => g.status === 'passed').length;
@@ -523,10 +525,15 @@ const commands = {
       return;
     }
     if (!graph.nodes.length) return console.log('No projects registered.');
-    // Prints each project under what it depends on; a project with several dependencies appears under each.
+    // Prints each project under what it depends on. A project with several dependencies appears under each,
+    // but its own users are listed only the first time, so the tree stays as long as the graph is large.
+    const expanded = new Set();
     const print = (key, label, indent) => {
       const n = node(key);
-      console.log(`${indent}${indent ? '└─ ' : ''}${key}${label ? ` (${label})` : ''}${n.description ? ` - ${n.description}` : ''}`);
+      const again = expanded.has(key);
+      console.log(`${indent}${indent ? '└─ ' : ''}${key}${label ? ` (${label})` : ''}${n.description ? ` - ${n.description}` : ''}${again && n.usedBy.length ? ' (its users are listed above)' : ''}`);
+      if (again) return;
+      expanded.add(key);
       for (const user of n.usedBy) print(user, node(user).dependsOn.find((d) => d.key === key).label, `${indent}   `);
     };
     for (const n of graph.nodes.filter((x) => !x.dependsOn.length)) print(n.key, '', '');

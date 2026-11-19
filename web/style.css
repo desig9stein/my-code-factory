@@ -236,3 +236,11 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark .fd-reach-note{border-left:2px solid var(--fd-accent);padding:2px 0 2px 12px;margin:12px 0}
 @media(max-width:1080px){#factory-dark .fd-map{grid-template-columns:minmax(0,1fr) 320px}}
 @media(max-width:680px){#factory-dark .fd-map{display:block}#factory-dark .fd-graph-wrap{display:none}#factory-dark .fd-tree{display:block}#factory-dark .fd-side{border-left:0;border-top:1px solid var(--fd-line);padding:18px 16px}#factory-dark .fd-canvas{padding:0 12px 16px}}
+/* Long unbroken text (a 300-character title, a path, a pasted token) wraps instead of widening the page. */
+#factory-dark :where(h1,h2,h3,h4,p,li,strong,small,span,code,button,a,td,th,summary,div){overflow-wrap:anywhere}
+#factory-dark .fd-page,#factory-dark .fd-project,#factory-dark .fd-head,#factory-dark .fd-queue,#factory-dark .fd-row,#factory-dark .fd-tree,#factory-dark .fd-tree li,#factory-dark .fd-col,#factory-dark .fd-empty{min-width:0;max-width:100%}
+#factory-dark .fd-page{max-width:min(780px,100%)}#factory-dark .fd-page-wide{max-width:min(1100px,100%)}
+#factory-dark .fd-table-wrap{max-width:100%}
+/* Very deep chains stop indenting after six levels, so the list still fits a phone. */
+#factory-dark .fd-tree ul ul ul ul ul ul ul{padding-left:0;margin-left:0;border-left:0}
+#factory-dark .fd-tree ul{padding-left:12px;margin-left:6px}
