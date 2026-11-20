@@ -97,12 +97,13 @@
     try { localStorage.setItem('factory-queue-mode', mode); } catch { /* The choice lasts for this visit only. */ }
     applyQueueMode(); syncHash();
   };
-  const needsYou = (i) => Boolean(i.blocked) || i.stage === 'ready';
+  const needsYou = (i) => Boolean(i.blocked) || i.stage === 'ready' || i.stage === 'approved';
   const failingGate = (i) => i.gates.find(g => g.status === 'failed');
   // Says what the task waits for; colour is never the only signal.
   function queueStatus(i) {
     if (i.blocked) return { text: i.blockedKind === 'unclear' ? 'Your turn · answer the agent' : i.blockedKind === 'attempts' ? 'Your turn · agent stopped' : 'Your turn · paused', cls: 'fd-fail' };
     if (i.stage === 'ready') return { text: 'Your turn · review', cls: 'fd-warning' };
+    if (i.stage === 'approved') return { text: i.kind === 'review' ? 'Your turn · post the review' : 'Your turn · create the PR', cls: 'fd-warning' };
     const failed = failingGate(i);
     if (failed) return { text: `Check "${failed.name}" failed`, cls: 'fd-fail' };
     return { text: `Agent · ${(i.stageTitle || i.stage).replaceAll('-', ' ')}`, cls: 'fd-muted' };
@@ -189,6 +190,9 @@
     if (i.stage === 'ready') {
       return panel('you', i.kind === 'review' ? 'read the review draft, then decide' : 'review the change, then decide', `<p>The checks passed${i.kind === 'review' ? '' : ' and the verifier agreed'}. Read <button class="fd-link" type="button" data-tab="${i.kind === 'review' ? 'review' : 'changes'}">${i.kind === 'review' ? 'the draft' : 'the changes'}</button>, <button class="fd-link" type="button" data-tab="evidence">the evidence</button> and <button class="fd-link" type="button" data-tab="brief">the PR description</button>. Approving lets the agent ${i.kind === 'review' ? 'post this review' : 'push and open the pull request'}. Sending back returns it to the agent with your reason.</p><div class="fd-actions">${served && i.approvalKey ? '<button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button>' : ''}</div><p class="fd-caption">Approval covers the commit and the text shown here. It does not push, merge or post by itself.</p>`);
     }
+    if (i.stage === 'approved' && i.kind === 'review') {
+      return panel('you', 'you approved this review, now post it', `<p>Nothing has been posted yet.</p><div class="fd-actions">${served ? '<button class="fd-btn fd-primary" type="button" data-post-review>Post the review</button>' : ''}</div><p class="fd-caption">Posts the approved draft on the pull request with its verdict, under your GitHub name.</p>`);
+    }
     if (i.stage === 'pr-opened' || i.stage === 'posted') {
       return panel('done', i.stage === 'posted' ? 'The review is posted' : 'The pull request is open', `<p>${i.changes ? `${plural(i.changes.files, 'file')} changed, every check passed${i.verdict === 'pass' ? ' and the verifier agreed' : ''}. ` : ''}${i.prUrl ? `${externalLink(i.prUrl, 'Open the pull request')}. ` : ''}Nothing more happens here. Archive the task ${i.stage === 'posted' ? 'when you are done with it' : 'once the pull request is merged'}.</p>`);
     }
@@ -202,10 +206,11 @@
     if (isActive(i)) agent = `<p class="fd-now-live"><span class="fd-dot"></span>An agent session is working on this task. Last activity ${minutes < 1 ? 'under a minute' : `${minutes} min`} ago.</p><p class="fd-now-label">Open another session only if that one is gone:</p>${launch(i, false)}`;
     else if (opened) agent = `<p class="fd-now-live"><span class="fd-dot"></span>You opened a session for this task a moment ago. Send the message there; this page updates when the agent starts working.</p><p class="fd-now-label">It did not open? Try again:</p>${launch(i, false)}`;
     else agent = `<p class="fd-now-label">${minutes === null ? 'No agent session has worked on this task yet. Start one:' : `No agent is working on this task right now. The last session was active ${minutes < 90 ? `${minutes} min` : `${Math.round(minutes / 60)} h`} ago. Start one to continue:`}</p>${launch(i)}`;
-    // Opening the pull request is the one agent step a person can simply do by hand.
+    // Opening the pull request is mechanical once approved, so the board does it; an agent or the user's own hands remain options.
     if (i.stage === 'approved' && i.kind !== 'review') {
       const own = served ? `<details class="fd-launch-more"><summary>Or open the pull request yourself</summary><p>Push the branch <code>${escape(i.branch)}</code> from <code>${escape(i.worktree)}</code>, open the pull request with the PR description under Task brief, then paste its address here.</p><form id="pr-form" class="fd-locate"><label><span class="sr-only">Address of the pull request</span><input name="url" type="url" required placeholder="https://github.com/owner/repo/pull/123" autocomplete="off"></label><button class="fd-btn" type="submit">Record the pull request</button></form><p id="pr-error" class="fd-failed" role="alert"></p></details>` : '';
-      return panel('agent', 'You approved this. Next: push and open the pull request', `<p>An agent does this step: it pushes the branch and opens the pull request with the approved description. Nothing has been pushed yet.</p>${agent}${own}`);
+      const create = served ? `<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-create-pr>Create the pull request</button></div><p class="fd-caption">Pushes the branch <code>${escape(i.branch)}</code> and opens the pull request into <code>${escape(i.base)}</code> with the approved description, using your GitHub login.</p>` : '';
+      return panel('you', 'you approved this, now create the pull request', `<p>Nothing has been pushed yet.</p>${create}<details class="fd-launch-more"><summary>Or let an agent do it</summary>${agent}</details>${own}`);
     }
     return panel('agent', `The agent is at: ${name}`, `<p>${escape(i.about || 'The agent works on this step.')}</p>${notes}${missing}${agent}`);
   }
@@ -638,7 +643,7 @@
     if (e.target.closest('[data-close]')) { const id = peek; peek = null; renderBoard(); document.querySelector(`[data-peek="${CSS.escape(id)}"]`)?.focus(); return; }
     const open = e.target.closest('[data-open]'); if (open) return openTask(peek, open.dataset.open);
     // The drawer shows the same panel as the task page, so its buttons take the same path.
-    if (e.target.closest('[data-action], [data-unblock], [data-post-questions], [data-copy-doc], [data-copy-prompt], .fd-now a.fd-btn, [data-tab]')) { selected = peek; const twin = e.target.closest('[data-tab]'); if (twin) return openTask(peek, twin.dataset.tab); $('detail').dispatchEvent(new CustomEvent('fd-act', { detail: e.target })); }
+    if (e.target.closest('[data-action], [data-unblock], [data-post-questions], [data-create-pr], [data-post-review], [data-copy-doc], [data-copy-prompt], .fd-now a.fd-btn, [data-tab]')) { selected = peek; const twin = e.target.closest('[data-tab]'); if (twin) return openTask(peek, twin.dataset.tab); $('detail').dispatchEvent(new CustomEvent('fd-act', { detail: e.target })); }
   };
   $('detail').addEventListener('toggle', e => { if (e.target.open && e.target.dataset?.log) loadLog(e.target); }, true);
   document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => show(button.dataset.view));
@@ -663,6 +668,21 @@
       $('answer-form').elements.note.required = mode === 'answer';
       $('answer-label').textContent = mode === 'answer' ? 'Your answer' : 'Note for the agent (optional)';
       $('answer-dialog').showModal(); $('answer-form').elements.note.focus();
+    }
+    if (e.target.closest('[data-create-pr]')) {
+      const i = task();
+      pending = { id: i.id };
+      $('pr-create-form').reset(); $('pr-create-error').textContent = '';
+      $('pr-create-form').elements.title.value = i.prTitle || i.title;
+      $('pr-text').textContent = `${i.repo} #${i.issue}: this pushes the branch ${i.branch} at commit ${(i.head || '').slice(0, 12)} and opens a pull request into ${i.base}. It is the version you approved. It becomes public on GitHub at once.`;
+      $('pr-dialog').showModal(); $('pr-create-form').elements.title.focus();
+    }
+    if (e.target.closest('[data-post-review]')) {
+      const i = task();
+      pending = { path: '/api/review/post', body: { id: i.id }, done: `${i.id}: review posted.` };
+      $('action-title').textContent = 'Post this review on GitHub?';
+      $('action-text').textContent = `The approved draft is posted on ${i.repo} PR #${i.issue} with its verdict, under your GitHub name. Everyone who follows the pull request sees it.`;
+      $('action-dialog').showModal();
     }
     if (e.target.closest('[data-post-questions]')) {
       const i = task();
@@ -697,6 +717,18 @@
     try { await post('/api/pr', { id, url: e.target.elements.url.value }); notice(`${id}: pull request recorded.`); refresh(); }
     catch (error) { e.target.parentElement.querySelector('#pr-error').textContent = error.message; }
   });
+  $('cancel-pr').onclick = () => $('pr-dialog').close();
+  $('pr-create-form').onsubmit = async e => {
+    e.preventDefault();
+    const form = e.target;
+    $('confirm-pr').disabled = true; $('confirm-pr').textContent = 'Pushing and creating…'; $('pr-create-error').textContent = '';
+    try {
+      const result = await post('/api/pr/create', { id: pending.id, title: form.elements.title.value, draft: form.elements.draft.checked });
+      notice(`${pending.id}: pull request created. ${result.url}`);
+      $('pr-dialog').close(); pending = null; refresh();
+    } catch (error) { $('pr-create-error').textContent = error.message; }
+    finally { $('confirm-pr').disabled = false; $('confirm-pr').textContent = 'Push and create'; }
+  };
   $('cancel-answer').onclick = () => $('answer-dialog').close();
   $('answer-form').onsubmit = async e => {
     e.preventDefault();

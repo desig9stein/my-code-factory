@@ -693,3 +693,35 @@ test('the board records a pull request the user opened by hand, only at the open
     server.close();
   }
 });
+
+test('the board pushes the approved branch and opens the pull request, and refuses a version that changed', async () => {
+  const stub = path.join(tmp, 'gh-stub');
+  write(path.join(stub, 'gh'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${path.join(tmp, 'gh-args.txt')}"\necho "https://github.com/acme/app/pull/12"\n`);
+  fs.chmodSync(path.join(stub, 'gh'), 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${stub}${path.delimiter}${oldPath}`;
+  const server = await startServer(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];
+    const create = (headers, body) => fetch(`${base}/api/pr/create`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const head = sh(APP, 'git rev-parse HEAD');
+    write(path.join(DIR, 'pr-body.md'), 'Closes #5.\n');
+    at('ready', 'feature', { gatesSha: head });
+    assert.equal((await create({}, { id: ID })).status, 403);
+    assert.match((await (await create({ 'x-factory-token': token }, { id: ID })).json()).error, /is at "ready"\. It can go out only right after you approve it/);
+    at('approved', 'feature', { gatesSha: head, approvedSha: head, approvedDraftSha256: 'not-the-approved-text' });
+    assert.match((await (await create({ 'x-factory-token': token }, { id: ID })).json()).error, /changed after you approved it/);
+    assert.equal(sh(tmp, `git --git-dir "${path.join(tmp, 'app.git')}" branch --list task`), '');
+    at('approved', 'feature', { gatesSha: head, approvedSha: head, approvedDraftSha256: fileSha256(path.join(DIR, 'pr-body.md')) });
+    const made = await create({ 'x-factory-token': token }, { id: ID, title: 'fix(app): a title', draft: true });
+    assert.equal(made.status, 200, await made.clone().text());
+    assert.equal((await made.json()).url, 'https://github.com/acme/app/pull/12');
+    assert.match(sh(tmp, `git --git-dir "${path.join(tmp, 'app.git')}" rev-parse task`), new RegExp(head));
+    assert.deepEqual(fs.readFileSync(path.join(tmp, 'gh-args.txt'), 'utf8').trim().split('\n'), ['pr', 'create', '--repo', 'acme/app', '--base', 'main', '--head', 'task', '--title', 'fix(app): a title', '--body-file', path.join(DIR, 'pr-body.md'), '--draft']);
+    assert.deepEqual([loadState(ID).stage, loadState(ID).prUrl], ['pr-opened', 'https://github.com/acme/app/pull/12']);
+  } finally {
+    process.env.PATH = oldPath;
+    server.close();
+  }
+});
