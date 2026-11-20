@@ -20,7 +20,17 @@
   } catch { /* Invalid or unavailable storage uses explicit defaults. */ }
   const task = () => data.issues.find(i => i.id === selected);
   const status = (i) => i.blocked ? 'Your turn · paused' : i.stage === 'ready' ? 'Your turn · review' : (i.stageTitle || i.stage).replaceAll('-', ' ');
-  const notice = (message) => { $('notice').textContent = message; };
+  // Results and problems share one strip; a problem says so in words and can be dismissed.
+  const notice = (message, problem = false) => {
+    const box = $('notice');
+    box.className = problem ? 'fd-notice-problem' : '';
+    box.setAttribute('role', problem ? 'alert' : 'status');
+    box.innerHTML = message ? `<span>${problem ? 'Problem: ' : ''}${escape(message)}</span><button type="button" class="fd-link" id="notice-close">Dismiss</button>` : '';
+  };
+  $('notice').onclick = e => { if (e.target.id === 'notice-close') notice(''); };
+  // Mirrors TITLES in lib/workflow.mjs, for places that only have a stage key.
+  const STEP_NAMES = { gates: 'checks', ready: 'your review', approved: 'open the PR', 'pr-opened': 'PR opened' };
+  const stepName = (stage, id) => data.issues.find(i => i.id === id)?.steps?.find(x => x.stage === stage)?.title || STEP_NAMES[stage] || stage;
   const externalLink = (url, label) => /^https:\/\/github\.com\//i.test(url || '') ? `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer">${escape(label)}</a>` : escape(label);
   async function post(pathname, body) {
     const response = await fetch(pathname, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Factory-Token': window.__factoryToken }, body: JSON.stringify(body) });
@@ -59,7 +69,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not read the setup state.');
       setup = result;
-    } catch (error) { notice(error.message); return; }
+    } catch (error) { notice(error.message, true); return; }
     if (document.querySelector('dialog[open]')) return;
     renderProjects();
     if (!task()) renderDetail();
@@ -102,7 +112,7 @@
   // The steps of this task's own workflow, with the ones already passed and the current one marked.
   function progress(i) {
     const steps = i.steps || [], at = steps.findIndex(x => x.stage === i.stage);
-    return `<ol class="fd-steps" aria-label="Steps">${steps.map((x, n) => { const skipped = i.tier === 'trivial' && n < at && (x.stage === 'reproduce' || x.stage === 'plan'); return `<li class="${n < at ? 'fd-done' : n === at ? 'fd-current' : ''}${skipped ? ' fd-skipped' : ''}"${n === at ? ' aria-current="step"' : ''}><span>${escape(x.title)}${skipped ? ' (skipped)' : ''}</span></li>`; }).join('')}</ol>`;
+    return `<ol class="fd-steps" aria-label="Steps">${steps.map((x, n) => { const skipped = i.tier === 'trivial' && n < at && (x.stage === 'reproduce' || x.stage === 'plan'); return `<li class="${n < at ? 'fd-done' : n === at ? 'fd-current' : ''}${skipped ? ' fd-skipped' : ''}"${n === at ? ' aria-current="step"' : ''}><span>${escape(x.title)}${skipped ? ' (skipped)' : ''}</span>${n < at && !skipped ? '<span class="sr-only"> (done)</span>' : ''}</li>`; }).join('')}</ol>`;
   }
 
   const COLUMNS = [['you', 'Your turn', 'review · answer · failures'], ['start', 'Understand', 'triage · reproduce · plan'], ['build', 'Build', 'implement'], ['check', 'Check', 'checks · verify'], ['ship', 'Ship', 'open the PR · PR opened']];
@@ -111,13 +121,17 @@
   const span = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : s < 172800 ? `${Math.floor(s / 3600)} h` : `${Math.floor(s / 86400)} d`; };
   const agoShort = (iso) => span(Date.now() - new Date(iso).getTime());
   const callText = (c) => c.kind === 'mcp' ? `MCP ${c.label}${c.detail ? ` · ${c.detail}` : ''}` : c.kind === 'skill' ? `skill ${c.label}` : c.kind === 'agent' ? `${c.label} agent` : c.detail ? `${c.label}: ${c.detail}` : c.label;
-  const isActive = (i) => Boolean(i.activity?.last) && Date.now() - new Date(i.activity.last.at).getTime() < i.activity.activeWindowMs;
+  // The newest sign of an agent on a task: a tool call a hook reported, or a write to a linked session.
+  const ACTIVE_MS = 120000;
+  const lastSeen = (i) => Math.max(Date.parse(i.activity?.last?.at || '') || 0, Date.parse(i.lastActivity || '') || 0);
+  const isActive = (i) => !i.blocked && Date.now() - lastSeen(i) < ACTIVE_MS;
   // The kind is written out, so the chip colour is never the only signal.
   const actChip = (item) => `<span class="fd-achip fd-achip-${escape(item.kind)}">${escape(item.kind === 'mcp' ? `MCP ${item.label}` : item.kind === 'skill' ? `skill ${item.label}` : item.kind === 'agent' ? `${item.label} agent` : item.label)} ${number(item.count)}</span>`;
   const liveInner = (i) => {
-    const a = i.activity;
-    if (!a.recorded) return '<span class="fd-idle"></span><span class="fd-muted">No agent activity recorded</span>';
-    return isActive(i) ? `<span class="fd-pulse"></span><span>${a.last.agent ? `${escape(a.last.agent)} agent` : 'Agent'} working · ${escape(callText(a.last))} · ${agoShort(a.last.at)} ago</span>` : `<span class="fd-idle"></span><span>Last agent activity ${agoShort(a.last.at)} ago</span>`;
+    const seen = lastSeen(i), a = i.activity;
+    if (!seen) return '<span class="fd-idle"></span><span class="fd-muted">No agent has worked on this yet</span>';
+    const since = agoShort(new Date(seen).toISOString());
+    return isActive(i) ? `<span class="fd-pulse"></span><span>Agent working${a?.last ? ` · ${escape(callText(a.last))}` : ''} · ${since} ago</span>` : `<span class="fd-idle"></span><span>Last agent activity ${since} ago</span>`;
   };
   const liveLine = (i) => `<div class="fd-live" data-live="${escape(i.id)}">${liveInner(i)}</div>`;
   const currentStage = (i) => i.activity.byStage.find(s => s.stage === i.stage);
@@ -148,7 +162,7 @@
     document.querySelectorAll('[data-live]').forEach(el => { const i = data.issues.find(x => x.id === el.dataset.live); if (i) el.innerHTML = liveInner(i); });
     if (!served) return;
     const working = data.issues.filter(isActive).length;
-    $('connection').textContent = lost ? 'Disconnected · showing last loaded data' : working ? `Live · ${working} agent${working === 1 ? '' : 's'} working` : 'Live · no agent activity in the last minute';
+    $('connection').textContent = lost ? 'Disconnected · showing last loaded data' : working ? `Live · ${working} agent${working === 1 ? '' : 's'} working` : 'Live · no agent working right now';
   }
   // Map: how the registered projects depend on each other, and what a change in one of them reaches.
   let mapSel = null, mapMode = 'explore';
@@ -181,10 +195,10 @@
     const missing = (i.missing || []).length ? `<p class="fd-now-label">Before this step is done:</p><ul class="fd-now-list">${i.missing.map(m => `<li>${escape(m)}</li>`).join('')}</ul>` : '<p class="fd-now-label">Nothing is missing for this step. The agent only has to move the task on.</p>';
     const notes = `${i.sentBack ? `<p class="fd-warning">You sent this back: ${escape(i.sentBack)}</p>` : ''}${i.docs.answers ? '<p class="fd-caption">Your answer is waiting for the agent. It reads it when it next works on the task.</p>' : ''}${i.attempts?.failed ? `<p class="fd-caption">${i.attempts.failed} of ${i.attempts.max} failed attempts used at this step.</p>` : ''}`;
     // A session counts as working while its transcript changed in the last few minutes, or right after you opened one here.
-    const minutes = i.lastActivity ? Math.max(0, Math.round((Date.now() - Date.parse(i.lastActivity)) / 60000)) : null;
+    const minutes = lastSeen(i) ? Math.max(0, Math.round((Date.now() - lastSeen(i)) / 60000)) : null;
     const opened = Date.now() - (launched[i.id] || 0) < 3 * 60000;
     let agent;
-    if (minutes !== null && minutes < 5) agent = `<p class="fd-now-live"><span class="fd-dot"></span>An agent session is working on this task. Last activity ${minutes < 1 ? 'under a minute' : `${minutes} min`} ago.</p><details class="fd-launch-more"><summary>Start another session anyway</summary>${launch(i, false)}</details>`;
+    if (isActive(i)) agent = `<p class="fd-now-live"><span class="fd-dot"></span>An agent session is working on this task. Last activity ${minutes < 1 ? 'under a minute' : `${minutes} min`} ago.</p><details class="fd-launch-more"><summary>Start another session anyway</summary>${launch(i, false)}</details>`;
     else if (opened) agent = `<p class="fd-now-live"><span class="fd-dot"></span>You opened a session for this task a moment ago. Send the message there; this page updates when the agent starts working.</p><details class="fd-launch-more"><summary>It did not open? Try again</summary>${launch(i, false)}</details>`;
     else agent = `<p class="fd-now-label">${minutes === null ? 'No agent session has worked on this task yet. Start one:' : `No agent is working on this task right now. The last session was active ${minutes < 90 ? `${minutes} min` : `${Math.round(minutes / 60)} h`} ago. Start one to continue:`}</p>${launch(i)}`;
     return panel('agent', `The agent is at: ${name}`, `<p>${escape(i.about || 'The agent works on this step.')}</p>${notes}${missing}${agent}`);
@@ -205,7 +219,7 @@
     const tabs = [['overview', 'Overview'], ['changes', 'Changes'], ['evidence', 'Evidence'], ['agent', 'Agent activity'], ['brief', 'Task brief'], ['usage', 'Usage']];
     if (i.kind === 'review') tabs.splice(1, 0, ['review', 'Review draft']);
     if (!tabs.some(([key]) => key === tab)) tab = 'overview';
-    $('detail').innerHTML = `<div class="fd-head"><button class="fd-btn fd-back" data-back>← All tasks</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span class="${queueStatus(i).cls}">${escape(queueStatus(i).text)}</span>${i.tier === 'trivial' ? '<span class="fd-muted">trivial change</span>' : ''}</p><h2 class="fd-h1">${escape(i.title)}</h2><div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div>${progress(i)}</div>${nowPanel(i)}<div class="fd-tabs" aria-label="Task sections">${tabs.map(([key, title]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${title}</button>`).join('')}</div><div class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served ? '<button class="fd-btn fd-ghost" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>Archiving hides the task and removes its worktree. The branch and the recorded evidence are kept.</small></footer>`;
+    $('detail').innerHTML = `<div class="fd-head"><button class="fd-btn fd-back" data-back>← All tasks</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span class="${queueStatus(i).cls}">${escape(queueStatus(i).text)}</span>${i.tier === 'trivial' ? '<span class="fd-muted">trivial change</span>' : ''}</p><h2 class="fd-h1">${escape(i.title)}</h2><div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div>${progress(i)}</div>${nowPanel(i)}<div class="fd-tabs" role="tablist" aria-label="Task sections">${tabs.map(([key, title]) => `<button role="tab" id="tab-${key}" data-tab="${key}" aria-selected="${tab === key}" aria-controls="body">${title}</button>`).join('')}</div><div role="tabpanel" aria-labelledby="tab-${tab}" class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served ? '<button class="fd-btn fd-ghost" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>Archiving hides the task and removes its worktree. The branch and the recorded evidence are kept.</small></footer>`;
     if (tab === 'usage') renderUsage(i);
     else if (tab === 'overview') renderOverview(i);
     else if (tab === 'agent') $('body').innerHTML = i.activity ? agentActivity(i) : '<p class="fd-caption">No activity data for this task.</p>';
@@ -349,7 +363,7 @@
     let body = '<p class="fd-blank">Collecting the day…</p>';
     if (report?.error) body = `<p class="fd-blank fd-failed" role="alert">${escape(report.error)}</p>`;
     else if (report) {
-      const tasks = report.tasks.length ? `<h2 class="fd-section">Tasks <span>${report.tasks.length}</span></h2><ul class="fd-issues">${report.tasks.map(t => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(t.url, t.title)}</p><p class="fd-issue-meta"><span class="fd-chip">${escape(t.project)}</span><span>${t.kind === 'review' ? 'PR ' : ''}#${escape(t.number)}</span>${t.milestones.map(m => `<span class="fd-badge fd-badge-ok">${escape(m)}</span>`).join('')}<span>${t.from && t.from !== t.to ? `${escape(t.from)} → ${escape(t.to)}` : `at ${escape(t.to)}`}</span>${t.checks.passed + t.checks.failed ? `<span>${t.checks.passed} checks passed, ${t.checks.failed} failed</span>` : ''}${t.prUrl ? externalLink(t.prUrl, 'pull request') : ''}</p></div></li>`).join('')}</ul>` : '';
+      const tasks = report.tasks.length ? `<h2 class="fd-section">Tasks <span>${report.tasks.length}</span></h2><ul class="fd-issues">${report.tasks.map(t => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(t.url, t.title)}</p><p class="fd-issue-meta"><span class="fd-chip">${escape(t.project)}</span><span>${t.kind === 'review' ? 'PR ' : ''}#${escape(t.number)}</span>${t.milestones.map(m => `<span class="fd-badge fd-badge-ok">${escape(m)}</span>`).join('')}<span>${t.from && t.from !== t.to ? `${escape(stepName(t.from, t.id))} → ${escape(stepName(t.to, t.id))}` : `at ${escape(stepName(t.to, t.id))}`}</span>${t.checks.passed + t.checks.failed ? `<span>${t.checks.passed} checks passed, ${t.checks.failed} failed</span>` : ''}${t.prUrl ? externalLink(t.prUrl, 'pull request') : ''}</p></div></li>`).join('')}</ul>` : '';
       const prs = [...report.pullRequests.opened.map(p => ['opened', p]), ...report.pullRequests.merged.map(p => ['merged', p])];
       const pulls = prs.length ? `<h2 class="fd-section">Pull requests <span>${prs.length}</span></h2><ul class="fd-issues">${prs.map(([what, p]) => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(p.url, p.title)}</p><p class="fd-issue-meta"><span class="fd-badge fd-badge-ok">${what}</span><span>${escape(p.repo)}#${escape(p.number)}</span></p></div></li>`).join('')}</ul>` : '';
       const commits = report.commits.length ? `<h2 class="fd-section">Commits <span>${report.commits.reduce((n, c) => n + c.count, 0)}</span></h2>${report.commits.map(c => `<details class="fd-panel fd-general"><summary>${escape(c.project)} · ${c.count}</summary><ul class="fd-asset-list">${c.commits.map(x => `<li><code>${escape(x.sha)}</code><span>${escape(x.subject)}</span></li>`).join('')}</ul></details>`).join('')}` : '';
@@ -411,7 +425,7 @@
       link.click();
       URL.revokeObjectURL(link.href);
       notice('Saved factory.config.json. A teammate applies it with: factory setup --workspace <directory> --from factory.config.json');
-    } catch (error) { notice(error.message); }
+    } catch (error) { notice(error.message, true); }
   }
   $('projects').onclick = e => {
     if (e.target.id === 'export-config') exportConfig();
@@ -453,7 +467,7 @@
     const chip = (key, label, count) => `<button type="button" class="fd-chip-btn" data-gh-repo="${escape(key)}" aria-pressed="${ghRepo === key}">${escape(label)} <b>${count}</b></button>`;
     const chips = `<div class="fd-chips" role="group" aria-label="Filter by project">${chip('', 'All projects', all.length)}${[...counts].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([key, count]) => chip(key, key, count)).join('')}</div>`;
     const shown = all.filter(i => (!ghRepo || i.project === ghRepo) && `${i.title} #${i.number} ${i.labels.join(' ')}`.toLowerCase().includes(ghQuery.toLowerCase()));
-    const row = i => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(i.url, i.title)}</p><p class="fd-issue-meta"><span class="fd-chip">${escape(i.project)}</span><span>#${escape(i.number)}</span><span title="${escape(i.updatedAt)}">updated ${escape(ago(i.updatedAt))}</span>${i.assignees.length ? `<span>${escape(i.assignees.join(', '))}</span>` : ''}${i.labels.map(l => `<span class="fd-label">${escape(l.replace(/:[a-z0-9_+-]+:\s*/g, '') || l)}</span>`).join('')}</p></div><div class="fd-issue-action">${i.task ? `<span class="fd-badge fd-badge-ok">${escape(i.task.stage)}</span><button class="fd-btn" data-open-task="${escape(i.task.id)}">Open task</button>` : `<button class="fd-btn" data-start-project="${escape(i.project)}" data-start-number="${escape(i.number)}">Start task</button>`}</div></li>`;
+    const row = i => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(i.url, i.title)}</p><p class="fd-issue-meta"><span class="fd-chip">${escape(i.project)}</span><span>#${escape(i.number)}</span><span title="${escape(i.updatedAt)}">updated ${escape(ago(i.updatedAt))}</span>${i.assignees.length ? `<span>${escape(i.assignees.join(', '))}</span>` : ''}${i.labels.map(l => `<span class="fd-label">${escape(l.replace(/:[a-z0-9_+-]+:\s*/g, '') || l)}</span>`).join('')}</p></div><div class="fd-issue-action">${i.task ? `<span class="fd-badge fd-badge-ok">${escape(stepName(i.task.stage, i.task.id))}</span><button class="fd-btn" data-open-task="${escape(i.task.id)}">Open the task</button>` : `<button class="fd-btn" data-start-project="${escape(i.project)}" data-start-number="${escape(i.number)}">Start task</button>`}</div></li>`;
     $('gh-results').innerHTML = chips + (shown.length ? `<ul class="fd-issues">${shown.map(row).join('')}</ul>` : `<p class="fd-blank">${all.length ? 'No loaded issue matches the search or the selected project.' : ghFilter.who === 'assigned' ? 'No open issue is assigned to you in these projects. Set "Show issues" to Anyone to see every open issue.' : 'No issues match these choices.'}</p>`)
       + `<p class="fd-caption fd-page-foot">${plural(shown.length, 'issue')} shown of ${all.length}.${all.length >= gh.limit ? ` GitHub returned the ${gh.limit} most recently updated; narrow the filter to see the rest.` : ''}</p>`;
   }
@@ -561,12 +575,12 @@
   }
   function renderMetrics() {
     const m = data.metrics;
-    if (!m || !m.tasks.length) { $('metrics').innerHTML = '<h2 class="fd-h1">Metrics</h2><p class="fd-desc">No implemented tasks are recorded yet. Measures appear once a task has run its gates.</p>'; return; }
+    if (!m || !m.tasks.length) { $('metrics').innerHTML = '<h2 class="fd-h1">Metrics</h2><p class="fd-desc">No implemented tasks are recorded yet. Measures appear once a task has run its checks.</p>'; return; }
     const s = m.summary, na = (value, show = String) => value === null ? '<span class="fd-muted">n/a</span>' : escape(show(value));
     const tile = (label, value, note) => `<div class="fd-tile"><span class="fd-energy-label">${label}</span><strong>${value}</strong><span class="fd-caption">${note}</span></div>`;
     $('metrics').innerHTML = '<h2 class="fd-h1">Metrics</h2><p class="fd-desc">How tasks went, derived from recorded evidence and stage history. Archived tasks are included; reviews of other people’s pull requests are not.</p>'
-      + `<div class="fd-tiles">${tile('FIRST-PASS GATE RATE', na(s.firstPassRate, v => `${Math.round(v * 100)}%`), `${number(s.firstPass)} of ${number(s.withGateRuns)} tasks passed every gate on its first recorded run. ${number(s.tasks - s.withGateRuns)} without gate runs are left out.`)}${tile('MEDIAN TIME TO APPROVAL', na(s.medianHoursToApproval, v => `${number(v, 1)} h`), `${number(s.approved)} approved task${s.approved === 1 ? '' : 's'}, from intake to approval.`)}${tile('REWORK', escape(number(s.failedGateRuns + s.verifierFails + s.resets)), `${number(s.failedGateRuns)} failed gate runs · ${number(s.verifierFails)} verifier fail verdicts · ${number(s.resets)} resets after passing checks.`)}</div>`
-      + `<div class="fd-table-wrap"><table class="fd-usage-table fd-metrics-table"><caption class="sr-only">Measures per task</caption><thead><tr>${['Task', 'Tier', 'Type', 'Stage', 'First pass', 'Failed runs', 'Verifier fails', 'Resets', 'Hours to approval', 'New tokens'].map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${m.tasks.map(t => `<tr><th scope="row">${escape(t.id)}</th><td>${na(t.tier)}</td><td>${na(t.type)}</td><td>${escape(t.stage)}</td><td>${t.firstPass === null ? na(null) : `<span class="${t.firstPass ? 'fd-pass' : 'fd-fail'}">${t.firstPass ? 'yes' : 'no'}</span>`}</td><td>${number(t.failedGateRuns)}</td><td>${number(t.verifierFails)}</td><td>${number(t.resets)}</td><td>${na(t.hoursToApproval, v => number(v, 1))}</td><td>${na(t.freshTokens, v => compact(v) + (t.tokensPartial ? ' · partial' : ''))}</td></tr>`).join('')}</tbody></table></div>`
+      + `<div class="fd-tiles">${tile('FIRST-PASS CHECK RATE', na(s.firstPassRate, v => `${Math.round(v * 100)}%`), `${number(s.firstPass)} of ${number(s.withGateRuns)} tasks passed every check on its first recorded run. ${number(s.tasks - s.withGateRuns)} without check runs are left out.`)}${tile('MEDIAN TIME TO APPROVAL', na(s.medianHoursToApproval, v => `${number(v, 1)} h`), `${number(s.approved)} approved task${s.approved === 1 ? '' : 's'}, from intake to approval.`)}${tile('REWORK', escape(number(s.failedGateRuns + s.verifierFails + s.resets)), `${number(s.failedGateRuns)} failed check runs · ${number(s.verifierFails)} verifier fail verdicts · ${number(s.resets)} resets after passing checks.`)}</div>`
+      + `<div class="fd-table-wrap"><table class="fd-usage-table fd-metrics-table"><caption class="sr-only">Measures per task</caption><thead><tr>${['Task', 'Tier', 'Type', 'Step', 'First pass', 'Failed runs', 'Verifier fails', 'Resets', 'Hours to approval', 'New tokens'].map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${m.tasks.map(t => `<tr><th scope="row">${escape(t.id)}</th><td>${na(t.tier)}</td><td>${na(t.type)}</td><td>${escape(stepName(t.stage, t.id))}</td><td>${t.firstPass === null ? na(null) : `<span class="${t.firstPass ? 'fd-pass' : 'fd-fail'}">${t.firstPass ? 'yes' : 'no'}</span>`}</td><td>${number(t.failedGateRuns)}</td><td>${number(t.verifierFails)}</td><td>${number(t.resets)}</td><td>${na(t.hoursToApproval, v => number(v, 1))}</td><td>${na(t.freshTokens, v => compact(v) + (t.tokensPartial ? ' · partial' : ''))}</td></tr>`).join('')}</tbody></table></div>`
       + '<p class="fd-caption">“n/a” means no data, not zero. These describe recorded work in this factory; they are not a productivity comparison.</p>';
   }
   function renderActivity() {
@@ -598,7 +612,7 @@
   const pickNode = (key, from) => { mapSel = key; renderMap(); (from === 'panel' ? $('map-panel') : document.querySelector(`#map ${from === 'tree' ? '.fd-leaf' : '.fd-gnode'}[data-node="${CSS.escape(key)}"]`))?.focus({ preventScroll: true }); };
   $('map').onclick = e => {
     if (e.target.closest('[data-declare]')) {
-      post('/api/graph/declare', {}).then(r => { notice(`${r.added.length} relationship(s) added.${r.skipped.length ? ` Left out, because the other direction is already declared: ${r.skipped.join(', ')}.` : ''}`); refresh(); }, error => notice(error.message));
+      post('/api/graph/declare', {}).then(r => { notice(`${r.added.length} relationship(s) added.${r.skipped.length ? ` Left out, because the other direction is already declared: ${r.skipped.join(', ')}.` : ''}`); refresh(); }, error => notice(error.message, true));
       return;
     }
     const modeButton = e.target.closest('[data-mapmode]');
@@ -781,10 +795,21 @@
   const workflow = mountWorkflow({ $, escape, post, served, notice, ask, projects: () => data.projects });
   $('open-help').onclick = () => $('help-dialog').showModal();
   $('activity').onclick = e => { const open = e.target.closest('[data-open-task]'); if (open) openTask(open.dataset.openTask); };
-  // Single keys for the frequent moves; they stay out of the way while typing or while a dialog is open.
+  // Single keys for the frequent moves; they stay out of the way while typing or while a dialog is open, and can be switched off.
+  let keysOn = true;
+  try { keysOn = localStorage.getItem('factory-keys') !== 'off'; } catch { /* Shortcuts stay on when storage is unavailable. */ }
+  $('keys-on').checked = keysOn;
+  $('keys-on').onchange = e => { keysOn = e.target.checked; try { localStorage.setItem('factory-keys', keysOn ? 'on' : 'off'); } catch { /* The choice lasts for this visit only. */ } };
   addEventListener('keydown', e => {
-    if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector('dialog[open]') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
-    const move = step => { if (!data.issues.length) return; const at = data.issues.findIndex(i => i.id === selected); openTask(data.issues[(at + step + data.issues.length) % data.issues.length].id); };
+    if (!keysOn || e.metaKey || e.ctrlKey || e.altKey || document.querySelector('dialog[open]') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
+    const onBoard = view === 'work' && queueMode === 'board';
+    const move = step => {
+      if (!data.issues.length) return;
+      // On the board the cards are walked in column order and the side panel follows.
+      const order = onBoard ? COLUMNS.flatMap(([key]) => data.issues.filter(i => columnOf(i) === key)) : data.issues;
+      const next = order[(order.findIndex(i => i.id === (onBoard ? peek : selected)) + step + order.length) % order.length].id;
+      if (onBoard) { peek = next; renderBoard(); document.querySelector(`[data-peek="${CSS.escape(next)}"]`)?.focus(); } else openTask(next);
+    };
     const keys = {
       '?': () => $('help-dialog').showModal(),
       n: () => openNew(),
@@ -792,8 +817,9 @@
       k: () => move(-1),
       b: () => { show('work'); queueMode = 'board'; applyQueueMode(); syncHash(); },
       l: () => { show('work'); queueMode = 'list'; applyQueueMode(); syncHash(); },
-      '/': () => { show('work'); queueMode = 'list'; applyQueueMode(); $('search').focus(); },
+      '/': () => { const box = { github: 'gh-search', projects: 'project-search' }[view]; if (box) return $(box)?.focus(); show('work'); queueMode = 'list'; applyQueueMode(); $('search').focus(); },
       a: () => document.querySelector('#work:not([hidden]) [data-action=approve], #drawer:not([hidden]) [data-action=approve]')?.click(),
+      r: () => document.querySelector('#work:not([hidden]) [data-action=reject], #drawer:not([hidden]) [data-action=reject]')?.click(),
     };
     if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
   });

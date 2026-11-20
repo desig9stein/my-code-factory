@@ -45,7 +45,7 @@
 #factory-dark .fd-branch{font:13px/1.5 ui-monospace,SFMono-Regular,monospace;color:var(--fd-muted);overflow-wrap:anywhere}
 #factory-dark .fd-tabs{border-bottom:1px solid var(--fd-line);display:flex;gap:22px;padding:0 23px;flex-wrap:wrap}
 #factory-dark .fd-tabs button{padding:10px 0;border-bottom:1px solid transparent;color:var(--fd-muted);font-size:14px}
-#factory-dark .fd-tabs button[aria-pressed=true]{color:var(--fd-fg);border-bottom-color:var(--fd-accent)}
+#factory-dark .fd-tabs button[aria-selected=true]{color:var(--fd-fg);border-bottom-color:var(--fd-accent)}
 #factory-dark .fd-body{padding:20px 23px;min-height:270px;flex:1;min-width:0;overflow-wrap:anywhere}
 #factory-dark .fd-file{font:13px/1.5 ui-monospace,SFMono-Regular,monospace;display:flex;gap:10px;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
 #factory-dark .fd-file span:last-child{color:var(--fd-green)}
@@ -404,3 +404,4 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 @media(max-width:680px){#factory-dark .fd-kb{grid-template-columns:1fr}#factory-dark .fd-glossary,#factory-dark .fd-keys{grid-template-columns:1fr;gap:2px 0}#factory-dark .fd-glossary dd{margin-bottom:8px}}
 @media(prefers-reduced-motion:reduce){#factory-dark *{transition:none!important;scroll-behavior:auto!important}}
 #factory-dark .fd-drawer .fd-now-title,#factory-dark .fd-side .fd-now-title{font-size:17px;letter-spacing:-.2px;text-transform:none;color:var(--fd-fg)}#factory-dark .fd-drawer .fd-now-you .fd-now-title{color:#eadfc6}
+#factory-dark #notice{display:flex;justify-content:space-between;gap:16px;align-items:baseline}#factory-dark #notice:empty{display:none}#factory-dark #notice.fd-notice-problem{color:var(--fd-red);background:#261b19}#factory-dark #notice .fd-link{flex:none;font-size:13px}

@@ -109,7 +109,7 @@ test('the summary states the counts, the task movement and the pull requests', (
   const { summary, pullRequests } = dayFacts(TODAY);
   assert.deepEqual(pullRequests.opened.map((p) => p.number), [9]);
   assert.match(summary, /You worked in 1 project: 1 factory task, 1 commit, 1 pull request opened, 1 merged\./);
-  assert.match(summary, /- app #7, "add returns the wrong sum": made ready for your review, approved by you, pull request opened, moved from plan to pr-opened\. Checks run: 1 passed, 1 failed\. https:\/\/github\.com\/acme\/app\/pull\/9/);
+  assert.match(summary, /- app #7, "add returns the wrong sum": made ready for your review, approved by you, pull request opened, moved from plan to PR opened\. Checks run: 1 passed, 1 failed\. https:\/\/github\.com\/acme\/app\/pull\/9/);
   assert.match(summary, /- Merged acme\/app#8, "docs\(app\): readme"\./);
   assert.match(summary, /- app: 1 commit\. fix\(app\): return the sum\./);
 });

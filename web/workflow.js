@@ -42,7 +42,7 @@ function mountWorkflow({ $, escape, post, served, notice, ask, projects }) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not load the workflow.');
       info = result; draft = structuredClone(result.override);
-    } catch (error) { notice(error.message); }
+    } catch (error) { notice(error.message, true); }
     loading = false;
     render();
   }
@@ -267,7 +267,7 @@ function mountWorkflow({ $, escape, post, served, notice, ask, projects }) {
     try {
       const result = await post('/api/workflow/preview', { scope, workflow: draft, pipeline, stage: 'triage', type: '' });
       info.shape = result.shape;
-    } catch (error) { notice(error.message); }
+    } catch (error) { notice(error.message, true); }
     render();
   }
 
@@ -282,7 +282,7 @@ function mountWorkflow({ $, escape, post, served, notice, ask, projects }) {
   async function suggest(pathname, ids, done) {
     if (changes().length) { notice('Save or discard your unsaved changes first, then accept suggestions.'); return; }
     try { await post(pathname, { project: scope, ids }); notice(done); await load(); }
-    catch (error) { notice(error.message); }
+    catch (error) { notice(error.message, true); }
   }
 
   el.addEventListener('click', e => {
