@@ -361,3 +361,17 @@ test('hooks install keeps the other hooks, writes a backup, and is a no-op the s
   assert.match(second.out, /already current/);
   assert.match(cli('hooks').out, /"PreToolUse"/);
 });
+
+test('the board declares the relationships package.json files show, and leaves out one that would close a cycle', async () => {
+  const { declareDetectedLinks, buildGraph } = await import('../lib/graph.mjs');
+  const reg = { repos: { ui: { dir: 'ui' }, theme: { dir: 'theme' }, app: { dir: 'app' } } };
+  write(path.join(WS, 'ui', 'package.json'), JSON.stringify({ name: 'acme-ui', dependencies: { 'acme-theme': '^1.0.0' } }));
+  write(path.join(WS, 'theme', 'package.json'), JSON.stringify({ name: 'acme-theme', devDependencies: { 'acme-ui': '^1.0.0' } }));
+  write(path.join(WS, 'app', 'package.json'), JSON.stringify({ name: 'acme-app', dependencies: { 'acme-ui': '^1.0.0' } }));
+  const result = declareDetectedLinks(reg);
+  assert.equal(result.added.length, 2);
+  assert.equal(result.skipped.length, 1);
+  assert.deepEqual(buildGraph(reg).problems, []);
+  assert.deepEqual(reg.repos.app.dependsOn, ['ui']);
+  assert.equal((await call('/api/graph/declare', {}, {})).status, 403);
+});
