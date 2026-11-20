@@ -151,6 +151,7 @@
     const found = served && setup ? setup.candidates.map((c, n) => [c, n]).filter(([c]) => match(c)) : [];
     const actions = p => served ? `<button class="fd-btn" data-edit="${escape(p.key)}">Edit</button><button class="fd-btn fd-ghost" data-remove="${escape(p.key)}">Remove</button>` : '';
     $('project-cards').innerHTML = (registered.length ? `<div class="fd-cards">${registered.map(p => projectCard(p, actions(p))).join('')}</div>` : `<p class="fd-blank">${data.projects.length ? 'No project matches this filter.' : 'No project is registered yet.'}</p>`)
+      + (served && setup?.pending?.length ? `<h2 class="fd-section">From your team's setup, not on this machine yet <span>${setup.pending.length}</span></h2><p class="fd-caption">These projects came with an imported setup, but their repository was not found in your workspace. Their shared commands and workflow are kept and apply when you add the project. Clone it into the workspace, or if it is already cloned somewhere else, use "Add a project by its folder" below.</p><ul class="fd-asset-list fd-pending">${setup.pending.map(p => `<li><span class="fd-chip">${escape(p.key)}</span>${externalLink(`https://github.com/${p.remote}`, p.remote)}<code>git clone git@github.com:${escape(p.remote)}.git</code></li>`).join('')}</ul>` : '')
       + (found.length ? `<h2 class="fd-section">Found in your workspace <span>${found.length}</span></h2><p class="fd-caption">GitHub repositories directly inside the workspace that are not registered. Review the suggested commands before you register one.</p><div class="fd-cards">${found.map(([c, n]) => projectCard(c, `<button class="fd-btn fd-primary" data-register="${n}">Register</button>`, 'fd-card-new')).join('')}</div>` : '');
   }
   function renderProjects() {
@@ -216,7 +217,7 @@
     editing = { mode, key: p.key, dir: p.dir, baseBranch: p.baseBranch, install: p.install || '' };
     const form = $('project-form');
     $('project-title').textContent = mode === 'edit' ? `Edit ${p.key}` : `Register ${p.key}`;
-    $('project-dir').textContent = p.dir;
+    $('project-dir').textContent = p.shared ? `${p.dir} · filled in from your team's shared setup for this repository` : p.dir;
     form.elements.key.value = p.key; form.elements.key.readOnly = mode === 'edit';
     form.elements.baseBranch.value = p.baseBranch; form.elements.install.value = p.install || '';
     $('project-gates').innerHTML = p.gates.map(gateRow).join('');

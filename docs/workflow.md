@@ -123,7 +123,7 @@ factory setup --workspace "$HOME/projects" --from factory.config.json
 factory hooks --install
 ```
 
-`factory import <file>` applies a newer file later. Import finds each project's checkout by its GitHub remote, so folder names may differ. A project that is not cloned is listed with its `git clone` command and skipped. Before anything is written, import prints every install and gate command the file registers, because those commands later run in a shell on that machine; it asks once in a terminal and needs `--yes` without one. Local-only state is kept.
+`factory import <file>` applies a newer file later. Import finds each project's checkout by its GitHub remote, so folder names may differ. A project that is not found in the workspace is not registered yet: import lists it with its `git clone` command, and keeps its shared settings on that machine. They apply as soon as the project is added, whether it is cloned into the workspace (`factory setup` finds it) or lives elsewhere and is added by its folder on the Projects page or with `factory add`. The Projects page lists the projects still waiting. Before anything is written, import prints every install and gate command the file registers, because those commands later run in a shell on that machine; it asks once in a terminal and needs `--yes` without one. Local-only state is kept.
 
 ## Daily report
 

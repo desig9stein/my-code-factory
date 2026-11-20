@@ -26,7 +26,7 @@ The Projects page of `factory board` edits a registered project: base branch, in
 - A command is one line of at most 500 characters. Join steps with `&&`, or move them into a package script. A project has at most 10 gates.
 - Changing a gate's command makes its earlier runs `stale` on tasks in flight. Run the gate again with `factory run <id> <gate>`.
 - Removing a project is refused while one of its tasks is in flight. The repository folder and the recorded task history stay.
-- "Add a project by its folder" registers a repository anywhere on the machine: type its folder (`~` works), check the suggested commands, and save. The folder must be the root of a cloned Git repository with a GitHub origin. A project outside the workspace is stored with its full path, and `factory import` on another machine looks for it inside that machine's workspace only.
+- "Add a project by its folder" registers a repository anywhere on the machine: type its folder (`~` works), check the suggested commands, and save. The folder must be the root of a cloned Git repository with a GitHub origin. A project outside the workspace is stored with its full path. On a teammate's machine an imported setup looks for it in their workspace first; when it is not there, its shared settings wait and apply when they add it from wherever they keep it.
 - The header shows the workspace folder.
 
 Other fields (`remote`, `dir`, `prBody`, branch conventions) are edited in `repos.json`.

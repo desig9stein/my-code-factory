@@ -186,9 +186,9 @@ const commands = {
     const plan = planImport(data);
     const changing = plan.projects.filter((p) => p.status === 'add' || p.status === 'update');
     console.log(`\n${plan.projects.length} projects in the file:\n`);
-    table(['STATUS', 'KEY', 'REMOTE', 'BASE', 'FOLDER'], plan.projects.map((p) => [p.status, p.key, p.remote, p.entry.baseBranch, p.dir ? path.relative(workspace(), p.dir) || '.' : `not cloned (expected ${p.folder})`]));
+    table(['STATUS', 'KEY', 'REMOTE', 'BASE', 'FOLDER'], plan.projects.map((p) => [p.status, p.key, p.remote, p.entry.baseBranch, p.dir ? path.relative(workspace(), p.dir) || '.' : 'not found in your workspace']));
     const missing = plan.projects.filter((p) => p.status === 'missing');
-    if (missing.length) console.log(`\nNot cloned, so not registered. Clone them into ${workspace()} and run the import again:\n${missing.map((p) => `  git clone git@github.com:${p.remote}.git ${p.folder}`).join('\n')}`);
+    if (missing.length) console.log(`\n${missing.length} project(s) were not found in your workspace (${workspace()}), so they are not registered yet. Their shared settings are kept and apply as soon as you add the project:\n\n  Not cloned yet? Clone it into the workspace, then run "factory setup":\n${missing.map((p) => `    git clone git@github.com:${p.remote}.git ${path.join(workspace(), p.folder)}`).join('\n')}\n\n  Cloned somewhere else? Add it where it is:\n    on the board: Projects, "Add a project by its folder"\n    or: factory add <key> <directory>`);
     // Imported commands run in a shell later, so every one is shown before it is accepted.
     if (changing.length) {
       console.log('\nCommands this file registers. They run on your machine when a task uses them:\n');

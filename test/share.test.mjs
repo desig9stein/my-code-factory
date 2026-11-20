@@ -113,9 +113,32 @@ test('a teammate sets up from the file and gets the same projects, defaults and 
 test('a project that is not cloned is reported with its clone command and not registered', () => {
   const root = path.join(tmp, 'mate-data');
   const r = cliAt(root, 'import', FILE, '--yes');
-  assert.match(r.out, /^missing +beta/m);
-  assert.match(r.out, /git clone git@github\.com:acme\/beta\.git beta/);
+  assert.match(r.out, /^missing +beta +acme\/beta +main +not found in your workspace/m);
+  assert.match(r.out, /git clone git@github\.com:acme\/beta\.git .*mate-ws\/beta/);
+  assert.match(r.out, /Cloned somewhere else\? Add it where it is:/);
   assert.equal(registryAt(root).repos.beta, undefined);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8')).pendingProjects), ['beta']);
+});
+
+test('a project cloned outside the workspace gets the shared settings when it is added by its folder', () => {
+  const root = path.join(tmp, 'mate-data');
+  const elsewhere = repo(path.join(tmp, 'mate-other'), 'beta-here', 'beta');
+  const shared = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+  shared.projects.beta = { ...shared.projects.beta, gates: [{ name: 'lint', cmd: 'npm run lint:all' }], prBody: { requiredSections: ['Summary'] } };
+  const file = path.join(tmp, 'shared-2.json');
+  write(file, JSON.stringify(shared));
+  assert.equal(cliAt(root, 'import', file, '--yes').status, 0);
+  const added = cliAt(root, 'add', 'anything', elsewhere);
+  assert.equal(added.status, 0, added.out);
+  const entry = registryAt(root).repos.anything;
+  assert.equal(entry.dir, elsewhere);
+  assert.deepEqual(entry.gates, [{ name: 'lint', cmd: 'npm run lint:all' }]);
+  assert.deepEqual(entry.prBody, { requiredSections: ['Summary'] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8')).pendingProjects, {});
+  fs.rmSync(elsewhere, { recursive: true });
+  const cleaned = registryAt(root);
+  delete cleaned.repos.anything;
+  write(path.join(root, 'repos.json'), JSON.stringify(cleaned));
 });
 
 test('a checkout in a differently named folder is found by its GitHub remote', () => {

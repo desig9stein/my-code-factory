@@ -220,3 +220,4 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 @container (max-width:900px){#factory-dark #report .fd-wf-grid{grid-template-columns:minmax(0,1fr)}}
 #factory-dark .fd-locate{display:flex;gap:8px;align-items:center;max-width:640px;margin-top:12px}#factory-dark .fd-locate label{flex:1;margin:0}#factory-dark #locate-error:empty{display:none}#factory-dark #locate-error{font-size:14px;margin:10px 0 0}
 #factory-dark .fd-top-note{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:46vw}
+#factory-dark .fd-pending{margin-top:12px}#factory-dark .fd-pending code{color:var(--fd-muted)}
