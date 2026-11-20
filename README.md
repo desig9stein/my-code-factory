@@ -39,6 +39,7 @@ The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foregro
 
 - A live board: five columns grouped by what is happening (Understand, Build, Check, Your turn, Ship), with a marker on tasks an agent acted on in the last minute. A list view keeps the queue grouped by what needs you.
 - Agent activity per stage: which tools, skills, subagents and MCP servers were used, with counts. Only names are stored.
+- A workspace map for people who do not know the repositories: what each project is, what it depends on, who uses it, and what a change in it reaches, in order. Tasks show which downstream projects their plan names.
 - Project list, stage history, and a metrics page.
 - A task overview that says what the stage needs next, with acceptance criteria, checks, change size, and the text an approval covers.
 - Committed diffs by file with added and removed lines marked, evidence runs with the end of each log inline, task briefs, and review drafts.

@@ -14,13 +14,14 @@ import { writeBoard } from '../lib/board.mjs';
 import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } from '../lib/checks.mjs';
 import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyChain } from '../lib/evidence.mjs';
 import { factoryRoot, issueDir, subdirOf, workspace, worktreesDir } from '../lib/paths.mjs';
+import { buildGraph, coverage, detectLinks, reach } from '../lib/graph.mjs';
 import { factoryMetrics } from '../lib/metrics.mjs';
 import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
 import { dayFacts, writePlainReport } from '../lib/report.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
-import { acceptanceCriteria, advance, approve, archive, capAttempts, gateStatus, inspect, sendBack, unblock, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
+import { acceptanceCriteria, advance, approve, archive, capAttempts, consumerImpact, gateStatus, inspect, sendBack, unblock, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
 import { formatTokens, issueTokens } from '../lib/tokens.mjs';
 import { brokenReferences, formatBrief, resolveWorkflow, stageBrief } from '../lib/workflow.mjs';
 import { exists, head, isDirty, listStates, loadState, move, saveState, sync } from '../lib/state.mjs';
@@ -32,7 +33,8 @@ const HELP = `Codeignite
   export <file>                                       Write the shareable configuration: projects, gates, workflow
   import <file> [--yes]                               Apply a shared configuration after showing what it changes
   init --workspace <directory>                        Initialize local configuration (never overwrites it)
-  add <key> <directory> [--verify <command>]           Register a project; --remote, --base, --install optional
+  add <key> <directory> [--verify <command>]           Register a project; --remote, --base, --install,
+                                                       --description <text>, --depends-on <a,b> optional
 
   new <repo>#<n> [--branch <name>] [--type fix|feat]   Take in an issue: snapshot, branch, worktree
   review <repo>#<pr>                                   Take in a pull request to review: snapshot, worktree at its head
@@ -59,7 +61,8 @@ const HELP = `Codeignite
   board [--no-open] [--static] [--stop]                Open the kanban board (local server on 127.0.0.1)
   hooks [--install] [--settings <file>]                Print the Claude Code hook settings, or install them with the factory skill and verifier agent
   assets <project>                                     List the skills, agents and instruction files a project has, with proposals
-  doctor                                               Compare the registry with the repos
+  doctor                                               Compare the registry with the repos; suggest relationships
+  graph [<key>] [--json]                               Show how projects depend on each other and what a change reaches
   report [today|yesterday|<date>] [--plain] [--json]   Summarize a day's work; --plain has Claude rewrite it in plain English
   metrics [--json]                                     First-pass rate, failed runs, resets and time to approval per task
 `;
@@ -590,9 +593,16 @@ const commands = {
         if (!scripts[script]) say(`gate "${g.name}" runs script "${script}", which ${path.relative(repo.dir, pkgFile)} does not define.`);
       }
     }
-    if (!problems.length) return console.log(`${Object.keys(registry.repos).length} repos checked, 0 drift.`);
+    const graph = buildGraph(registry);
+    problems.push(...graph.problems);
+    // Links the package manifests show but the registry does not declare are suggestions, not drift.
+    const suggestions = detectLinks(registry)
+      .filter((l) => !graph.nodes.find((n) => n.key === l.from)?.dependsOn.some((d) => d.key === l.to))
+      .map((l) => `${l.from} lists ${l.package} (${l.range}), which ${l.to} publishes. Consider "dependsOn": ["${l.to}"] for ${l.from}.`);
+    if (!problems.length) console.log(`${Object.keys(registry.repos).length} repos checked, 0 drift.`);
     for (const p of problems) console.log(`- ${p}`);
-    process.exitCode = 1;
+    if (suggestions.length) console.log(`\nSuggested relationships (from package.json; other kinds of link must be declared by hand):\n${suggestions.map((s) => `  ${s}`).join('\n')}`);
+    if (problems.length) process.exitCode = 1;
   },
 
   async report(args) {
@@ -627,6 +637,33 @@ const commands = {
     console.log(`\nInstruction files: ${assets.instructions.join(', ') || 'none'}\nPR template: ${assets.prTemplate || 'none'}`);
     console.log(`\nProposals (${proposals.length}); accept them on the Workflow page of the board:`);
     for (const p of proposals) console.log(`  - ${p.title}`);
+  },
+
+  graph(args) {
+    const graph = buildGraph(loadRegistry());
+    const node = (key) => graph.nodes.find((n) => n.key === key);
+    if (args.json) return console.log(JSON.stringify({ ...graph, nodes: graph.nodes.map((n) => ({ ...n, reach: reach(graph, n.key) })) }, null, 2));
+    for (const p of graph.problems) console.log(`! ${p}`);
+    if (args._[0]) {
+      const n = node(args._[0]);
+      if (!n) throw new Error(`Unknown project "${args._[0]}". Projects: ${graph.nodes.map((x) => x.key).join(', ')}.`);
+      const reached = reach(graph, n.key);
+      console.log(`${n.key}${n.description ? ` - ${n.description}` : ''}`);
+      console.log(`  depends on  ${n.dependsOn.map((d) => `${d.key}${d.label ? ` (${d.label})` : ''}`).join(', ') || 'nothing in this workspace'}`);
+      console.log(`  used by     ${n.usedBy.join(', ') || 'nothing in this workspace'}`);
+      console.log(reached.length ? `  a change here reaches ${reached.length} project${reached.length === 1 ? '' : 's'}, in this order:` : '  a change here reaches no other project.');
+      for (const r of reached) console.log(`    ${r.depth}. ${r.key}${r.depth > 1 ? ` (through ${r.via})` : ''}`);
+      return;
+    }
+    if (!graph.nodes.length) return console.log('No projects registered.');
+    // Prints each project under what it depends on; a project with several dependencies appears under each.
+    const print = (key, label, indent) => {
+      const n = node(key);
+      console.log(`${indent}${indent ? '└─ ' : ''}${key}${label ? ` (${label})` : ''}${n.description ? ` - ${n.description}` : ''}`);
+      for (const user of n.usedBy) print(user, node(user).dependsOn.find((d) => d.key === key).label, `${indent}   `);
+    };
+    for (const n of graph.nodes.filter((x) => !x.dependsOn.length)) print(n.key, '', '');
+    if (!graph.nodes.some((n) => n.dependsOn.length)) console.log('\nNo relationships declared. Add "dependsOn": ["<project>"] to a project in repos.json, or run "factory doctor" for suggestions.');
   },
 
   metrics(args) {
@@ -686,6 +723,10 @@ function statusOne(state) {
     gateStatus(state, repo, { actor: 'implementer' }).forEach((g, i) => console.log(`  ${g.name.padEnd(22)} ${g.status.padEnd(8)} / ${verifier[i].status}`));
   }
   if (state.type === 'bug' || regressStatus(state) !== 'missing') console.log(`  ${'regression proof'.padEnd(22)} ${regressStatus(state)}`);
+  if (state.kind !== 'review') {
+    const reached = coverage(buildGraph(loadRegistry()), state.repo, consumerImpact(state.id));
+    if (reached.length) console.log(`\nA change in ${state.repo} reaches:\n${reached.map((r) => `  ${r.key.padEnd(22)} ${r.depth === 1 ? 'direct' : `through ${r.via}`}; ${r.mentioned ? 'named in Consumer impact' : r.depth === 1 ? 'NOT named in Consumer impact' : 'not named (indirect)'}`).join('\n')}`);
+  }
   if (state.kind === 'review') console.log(`  ${'review draft'.padEnd(22)} ${reviewVerdict(state.id) || 'not written'}`);
   console.log('\nEvidence:');
   for (const r of listEvidence(state.id)) {
