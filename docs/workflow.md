@@ -46,7 +46,24 @@ Top-level fields: `types` (the task types triage may assign, default `bug`, `fea
 
 A skipped stage records `Skipped: <stage> is off for type <type>.` in the task history. The definition is read when a task advances, so a change applies to tasks in flight from their next stage on.
 
-Fixed, whatever the configuration says: the exit rules of `intake`, `triage`, `implement`, `ready`, `approved` and the final stage, the evidence chain check, the clean-tree rule, the PR body and commit checks, and approval by the user bound to the commit and draft. Stages cannot be reordered or added. Saving rejects an unknown stage, a field the stage does not have, and a type that does not exist, and refuses to switch the verifier off for a type that still requires the regression proof.
+### Adding and removing steps
+
+The issue pipeline can gain steps and lose two of its own. The review pipeline is fixed.
+
+- `removed` lists built-in steps to drop: `reproduce` and `plan`. The others carry a rule the factory depends on. The verifier is switched off per task type instead, because the `verify` step also checks the PR description and the commits.
+- `customStages` lists up to 6 added steps: `{ "id", "title", "about", "after", "check" }`. `after` is `triage`, `reproduce`, `plan`, `implement`, `gates`, `verify`, or an earlier added step, so a step always lies between triage and the human review. Its instructions, skills, agents, model and `skipFor` are stored under `stages.<id>` like any other step.
+- `check` is `{ "kind": "none" }`, `{ "kind": "document", "file": "design.md", "headings": [] }` (the file must exist in the task's document folder with those sections) or `{ "kind": "command", "cmd": "npm run test:a11y" }`. The agent runs a command check with `factory run <id> <step>`; it must pass at HEAD on a clean tree.
+- A step placed after `gates` is bound to the gated commit like `verify`: a new commit sends the task back to `gates`.
+- A project either follows the shared list of steps or has its own.
+- A task that sits in a step when the step is deleted continues after the last step that still exists, and its history says so.
+
+The `ready` stage is shown as "human review" on the board and in the brief. Its key stays `ready` in stored task state.
+
+### Models
+
+The model of a step is picked from the models of the detected coding harness. For Claude Code these are the family aliases `fable`, `opus`, `sonnet` and `haiku`, which always point at the newest model of the family; a full model id can be typed instead. The list is built in, not fetched. The model is a line in the brief; the agent applies it when it delegates the step.
+
+Fixed, whatever the configuration says: the exit rules of `intake`, `triage`, `implement`, `ready`, `approved` and the final stage, the evidence chain check, the clean-tree rule, the PR body and commit checks, and approval by the user bound to the commit and draft. Built-in stages cannot be reordered. Saving rejects an unknown stage, a field the stage does not have, and a type that does not exist, and refuses to switch the verifier off for a type that still requires the regression proof.
 
 ## Reusing a repository's own skills and agents
 

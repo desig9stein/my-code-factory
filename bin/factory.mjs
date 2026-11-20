@@ -20,7 +20,7 @@ import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
 import { advance, approve, archive, gateStatus, inspect, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
 import { formatTokens, issueTokens } from '../lib/tokens.mjs';
-import { brokenReferences, formatBrief, stageBrief } from '../lib/workflow.mjs';
+import { brokenReferences, formatBrief, resolveWorkflow, stageBrief } from '../lib/workflow.mjs';
 import { exists, head, isDirty, listStates, loadState, move, saveState, sync } from '../lib/state.mjs';
 
 const HELP = `Software factory
@@ -38,6 +38,7 @@ const HELP = `Software factory
   posted <id>                                          Review only: record that the approved review was posted
   status [<id>]                                        Table of issues, or one issue in detail
   run <id> <gate> [--as verifier]                      Run a registry gate and record the evidence
+  run <id> <step>                                      Run the check command of a step you added to the workflow
   run <id> install                                     Install dependencies in the worktree
   run <id> reproduce --expect-fail -- <command>        Record a command that shows the bug
   run <id> extra:<label> -- <command>                  Record any other check, such as another browser
@@ -355,6 +356,9 @@ const commands = {
     } else if (/^extra:[\w.-]+$/.test(name || '')) {
       if (!args.rest) throw new Error('An extra run needs the command after "--".');
       spec = { name, kind: 'run', cmd: args.rest, cwd: path.join(state.worktree, args.cwd || '') };
+    } else if (state.kind !== 'review' && resolveWorkflow(repo.key).customStages.some((step) => step.id === name && step.check.kind === 'command')) {
+      if (args.rest) throw new Error('A step check always runs the command configured on the Workflow page; remove the text after "--".');
+      spec = { name, kind: 'step', cmd: resolveWorkflow(repo.key).customStages.find((step) => step.id === name).check.cmd, cwd: state.worktree };
     } else {
       const gate = repo.gates.find((g) => g.name === name);
       if (!gate) throw new Error(`"${name}" is not a gate of ${repo.key}. Gates: ${repo.gates.map((g) => g.name).join(', ')}. Other checks use the name extra:<label>.`);

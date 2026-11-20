@@ -18,7 +18,7 @@
     if (saved) { rates = validateAssumptions(saved.rates); if (OBJECTS[saved.object]) object = saved.object; }
   } catch { /* Invalid or unavailable storage uses explicit defaults. */ }
   const task = () => data.issues.find(i => i.id === selected);
-  const status = (i) => i.blocked ? 'Blocked' : i.stage === 'ready' ? 'Ready for review' : i.stage.replaceAll('-', ' ');
+  const status = (i) => i.blocked ? 'Blocked' : i.stage === 'ready' ? 'Waiting for your review' : (i.stageTitle || i.stage).replaceAll('-', ' ');
   const notice = (message) => { $('notice').textContent = message; };
   const externalLink = (url, label) => /^https:\/\/github\.com\//i.test(url || '') ? `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer">${escape(label)}</a>` : escape(label);
   async function post(pathname, body) {

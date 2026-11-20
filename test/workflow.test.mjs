@@ -28,7 +28,8 @@ Object.assign(process.env, {
 const { defaultWorkflow, resolveWorkflow, saveWorkflow, stageBrief, formatBrief } = await import('../lib/workflow.mjs');
 const { acceptProposals, discoverAssets, dismissProposals, proposeForProject } = await import('../lib/assets.mjs');
 const { advance } = await import('../lib/stages.mjs');
-const { loadState, saveState } = await import('../lib/state.mjs');
+const stateModule = await import('../lib/state.mjs');
+const { loadState, saveState } = stateModule;
 const { getRepo } = await import('../lib/registry.mjs');
 const { addVerdict, fileSha256, runRecorded } = await import('../lib/evidence.mjs');
 
@@ -320,4 +321,112 @@ test('hooks install writes the factory skill and the verifier agent, and is a no
   assert.match(second.out, /factory-verifier\.md\. Previous version: .*factory-verifier\.md\.bak/);
   assert.equal(fs.readFileSync(`${agentFile}.bak`, 'utf8'), 'edited by hand');
   assert.match(cli('hooks', '--install').out, /factory-verifier\.md is already current/);
+});
+
+const { workflowShape } = await import('../lib/workflow.mjs');
+const { modelChoices } = await import('../lib/providers.mjs');
+const { userAssets } = await import('../lib/assets.mjs');
+const design = { id: 'design-review', title: 'Design review', about: 'Checks the design.', after: 'plan', check: { kind: 'document', file: 'design.md', headings: ['Decision'] } };
+
+test('a removed plan step leaves the pipeline, and reproduce continues at implement', () => {
+  saveWorkflow('global', { removed: ['plan'] });
+  assert.deepEqual(resolveWorkflow('app').order, ['intake', 'triage', 'reproduce', 'implement', 'gates', 'verify', 'ready', 'approved', 'pr-opened']);
+  at('reproduce', 'feature');
+  assert.equal(step().moved, true);
+  assert.equal(loadState(ID).stage, 'implement');
+  assert.deepEqual(workflowShape(resolveWorkflow('app')).removed.map((s) => s.stage), ['plan']);
+});
+
+test('only reproduce and plan can be removed', () => {
+  assert.throws(() => saveWorkflow('global', { removed: ['gates'] }), /removed may only list reproduce and plan/);
+  assert.throws(() => saveWorkflow('global', { removed: ['ready'] }), /removed may only list reproduce and plan/);
+});
+
+test('an added step sits after its anchor and holds the task until its document has the sections', () => {
+  saveWorkflow('global', { customStages: [design], stages: { 'design-review': { instructions: 'Write {dir}/design.md.', use: [{ ref: 'design:design-critique', kind: 'skill' }] } } });
+  assert.deepEqual(resolveWorkflow('app').order.slice(3, 6), ['plan', 'design-review', 'implement']);
+  at('plan', 'feature');
+  write(path.join(DIR, 'plan.md'), '## Files\n\n## Tests\n\n## Consumer impact\n\n## Changelog\n');
+  assert.equal(step().moved, true);
+  assert.equal(loadState(ID).stage, 'design-review');
+  assert.match(step().problems[0], /design\.md is missing or empty/);
+  write(path.join(DIR, 'design.md'), 'Looks fine.\n');
+  assert.deepEqual(step().problems, ['design.md needs a "## Decision" section.']);
+  write(path.join(DIR, 'design.md'), '## Decision\n\nApproved.\n');
+  assert.equal(step().moved, true);
+  assert.equal(loadState(ID).stage, 'implement');
+  const brief = cli('next', ID);
+  assert.equal(brief.status, 0, brief.out);
+});
+
+test('the brief of an added step carries its name, instructions, skill and check', () => {
+  saveWorkflow('global', { customStages: [design], stages: { 'design-review': { instructions: 'Write {dir}/design.md.', use: [{ ref: 'design:design-critique', kind: 'skill' }] } } });
+  const text = formatBrief(stageBrief(at('design-review', 'feature'), getRepo('app')));
+  assert.match(text, /stage design-review \(Design review\)/);
+  assert.match(text, /Invoke the skill "design:design-critique"/);
+  assert.match(text, /Done when: design\.md exists in the task's document folder with the sections: Decision\./);
+});
+
+test('an added step with a command check needs a passing run of that command at HEAD', () => {
+  saveWorkflow('app', { customStages: [{ id: 'a11y', title: 'Accessibility', about: '', after: 'gates', check: { kind: 'command', cmd: 'true' } }] });
+  assert.deepEqual(resolveWorkflow('app').order.slice(5, 8), ['gates', 'a11y', 'verify']);
+  at('a11y', 'feature');
+  assert.match(step().problems[0], /The check of step "a11y" has not run\. Run "factory run app-5 a11y"/);
+  const run = cli('run', ID, 'a11y');
+  assert.equal(run.status, 0, run.out);
+  assert.equal(step().moved, true);
+  assert.equal(loadState(ID).stage, 'verify');
+  assert.match(cli('run', ID, 'a11y', '--', 'false').out, /always runs the command configured on the Workflow page/);
+});
+
+test('a moved HEAD sends an added step that follows the checks back to gates', () => {
+  saveWorkflow('app', { customStages: [{ id: 'a11y', title: 'Accessibility', about: '', after: 'gates', check: { kind: 'none' } }] });
+  at('a11y', 'feature', { gatesSha: '0'.repeat(40) });
+  assert.equal(loadState(ID).stage, 'a11y');
+  const { sync } = stateModule;
+  assert.equal(sync(loadState(ID)).stage, 'gates');
+});
+
+test('a task in a step that was deleted continues after the last stage that still exists', () => {
+  at('design-review', 'feature', { history: [{ stage: 'plan', at: 'x', note: '' }, { stage: 'design-review', at: 'x', note: '' }] });
+  const r = step();
+  assert.equal(r.moved, true, r.problems.join('\n'));
+  assert.equal(loadState(ID).stage, 'implement');
+  assert.equal(loadState(ID).history.at(-1).note, 'Skipped: design-review was removed from the workflow.');
+});
+
+test('an added step is rejected when it reuses a factory name, sits after the human review, or exceeds the limit', () => {
+  const add = (step) => () => saveWorkflow('global', { customStages: [{ ...design, ...step }] });
+  assert.throws(add({ id: 'gates' }), /Step id "gates" is already used by the factory/);
+  assert.throws(add({ id: 'Design Review' }), /is not valid\. Use 2 to 24 lowercase letters/);
+  assert.throws(add({ after: 'ready' }), /cannot go after "ready"\. A step goes after one of: triage, reproduce, plan, implement, gates, verify\. Steps after the human review are fixed/);
+  assert.throws(add({ check: { kind: 'document', file: 'verify.md' } }), /verify\.md are written by the factory/);
+  assert.throws(add({ check: { kind: 'command', cmd: 'a\nb' } }), /needs a check command: one line/);
+  assert.throws(() => saveWorkflow('global', { customStages: Array.from({ length: 7 }, (_, n) => ({ ...design, id: `step-${n}` })) }), /at most 6 steps/);
+  assert.throws(() => saveWorkflow('global', { stages: { 'design-review': { instructions: 'x' } } }), /"design-review" is not a stage of the issue workflow/);
+});
+
+test('the ready stage is shown as "human review" and keeps its fixed rule', () => {
+  const shape = workflowShape(resolveWorkflow('app'));
+  const ready = shape.stages.find((s) => s.stage === 'ready');
+  assert.deepEqual([ready.title, ready.actor, ready.removable, ready.configurable], ['human review', 'You', false, false]);
+  assert.equal(shape.review.find((s) => s.stage === 'ready').title, 'human review');
+  assert.match(formatBrief(stageBrief(at('ready', 'feature'), getRepo('app'))), /stage ready \(human review\)/);
+});
+
+test('the model list names the Claude Code model families', () => {
+  const choices = modelChoices();
+  assert.equal(choices.provider, 'claude');
+  assert.deepEqual(choices.models.map((m) => m.id), ['fable', 'opus', 'sonnet', 'haiku']);
+  saveWorkflow('app', { stages: { implement: { model: 'sonnet' } } });
+  assert.match(formatBrief(stageBrief(at('implement', 'feature'), getRepo('app'))), /Model for this stage: sonnet/);
+});
+
+test('the user skill list includes plugin skills with their descriptions', () => {
+  const dir = path.join(tmp, 'claude');
+  write(path.join(dir, 'skills', 'mine', 'SKILL.md'), skill('mine', 'My own skill.'));
+  write(path.join(dir, 'plugins', 'synced', 'abc', 'design', 'skills', 'ux-copy', 'SKILL.md'), skill('ux-copy', 'Writes UX copy.'));
+  const { skills } = userAssets();
+  assert.deepEqual(skills.find((s) => s.name === 'mine'), { name: 'mine', description: 'My own skill.' });
+  assert.deepEqual(skills.find((s) => s.name === 'design:ux-copy'), { name: 'design:ux-copy', description: 'Writes UX copy.' });
 });
