@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Software factory CLI: tracks an issue from intake to a PR with recorded proof.
+// Codeignite CLI: tracks an issue from intake to a PR with recorded proof.
 // Usage: factory <command> [args]   (run "help" for the list)
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -24,7 +24,7 @@ import { formatTokens, issueTokens } from '../lib/tokens.mjs';
 import { brokenReferences, formatBrief, resolveWorkflow, stageBrief } from '../lib/workflow.mjs';
 import { exists, head, isDirty, listStates, loadState, move, saveState, sync } from '../lib/state.mjs';
 
-const HELP = `Software factory
+const HELP = `Codeignite
 
   setup [--workspace <directory>] [--yes]             Check the tools, initialize, and register every repo in the workspace
   setup --from <file> [--workspace <directory>]       Set up from a configuration a teammate exported

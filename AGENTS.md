@@ -1,4 +1,4 @@
-# Working on Code Factory
+# Working on Codeignite
 
 - Runtime: Node.js 22+, ES modules, no runtime dependencies. UI is buildless HTML/CSS/JS.
 - Run `npm run verify` before reporting a change complete. Tests use temporary Git repositories.

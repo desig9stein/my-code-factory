@@ -36,7 +36,7 @@ try {
     if (states.length) {
       const lines = states.map((s) => `- ${s.id}: ${s.blocked ? 'blocked' : s.stage} (branch ${s.branch}, worktree ${s.worktree})`);
       process.stdout.write(
-        `Software factory, issues in flight:\n${lines.join('\n')}\nWork on these only through the factory skill: "factory next <id>" prints what the current stage needs and which skills and agents to use.\n`,
+        `Codeignite, tasks in flight:\n${lines.join('\n')}\nWork on these only through the factory skill: "factory next <id>" prints what the current stage needs and which skills and agents to use.\n`,
       );
     }
   }

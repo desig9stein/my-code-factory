@@ -1,6 +1,6 @@
-# My Code Factory
+# Codeignite
 
-A local workspace for taking GitHub issues and pull requests through implementation, recorded checks, independent verification, and human approval. A compact dark interface puts changes, evidence, drafts, and token usage in one place.
+Codeignite is a local workspace for taking GitHub issues and pull requests through implementation, recorded checks, independent verification, and human approval. A compact dark interface puts changes, evidence, drafts, and token usage in one place.
 
 This is the first working version. It reuses the original factory engine, has no runtime npm dependencies, and keeps your project data outside this repository.
 
