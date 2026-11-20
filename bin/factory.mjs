@@ -16,6 +16,7 @@ import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyCha
 import { factoryRoot, issueDir, workspace, worktreesDir } from '../lib/paths.mjs';
 import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
+import { dayFacts, writePlainReport } from '../lib/report.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
 import { advance, approve, archive, gateStatus, inspect, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
@@ -56,6 +57,7 @@ const HELP = `Software factory
   hooks [--install] [--settings <file>]                Print the Claude Code hook settings, or install them with the factory skill and verifier agent
   assets <project>                                     List the skills, agents and instruction files a project has, with proposals
   doctor                                               Compare the registry with the repos
+  report [today|yesterday|<date>] [--plain] [--json]   Summarize a day's work; --plain has Claude rewrite it in plain English
 `;
 
 function parseArgs(argv) {
@@ -559,6 +561,13 @@ const commands = {
     if (!problems.length) return console.log(`${Object.keys(registry.repos).length} repos checked, 0 drift.`);
     for (const p of problems) console.log(`- ${p}`);
     process.exitCode = 1;
+  },
+
+  async report(args) {
+    const facts = dayFacts(args._[0]);
+    if (args.json) return console.log(JSON.stringify(facts, null, 2));
+    console.log(facts.summary);
+    if (args.plain) console.log(`\nIn plain English (written by Claude from the facts above):\n\n${await writePlainReport(facts)}`);
   },
 
   next(args) {

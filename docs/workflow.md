@@ -110,3 +110,15 @@ factory hooks --install
 ```
 
 `factory import <file>` applies a newer file later. Import finds each project's checkout by its GitHub remote, so folder names may differ. A project that is not cloned is listed with its `git clone` command and skipped. Before anything is written, import prints every install and gate command the file registers, because those commands later run in a shell on that machine; it asks once in a terminal and needs `--yes` without one. Local-only state is kept.
+
+## Daily report
+
+`factory report [today|yesterday|YYYY-MM-DD]` and the Daily report page summarize one day from three sources:
+
+- factory tasks whose stage changed or whose checks ran that day, including archived ones: where each task moved, its milestones (started, made ready for your review, approved, pull request opened, review posted, blocked, archived) and how many check runs passed and failed
+- your commits that day in every registered project, on any branch, matched by the repository's `user.email`
+- pull requests you opened or that were merged that day in the registered projects, read through the GitHub CLI
+
+The summary is built from these records with fixed sentences, so every line states something that was recorded. When GitHub cannot be read, the summary says so and leaves pull requests out. Work outside the registered projects is not included.
+
+`--plain`, or "Write it in plain English" on the page, sends the summary text to the Claude CLI (`claude -p`, model `sonnet`, no tools, no saved session) and prints what it writes: a few first-person bullets for a reader who does not read commit messages. The rewrite is asked to use only the given facts, but it rephrases commit titles and can get a detail wrong, so read it against the summary before you send it. `--json` prints the facts.

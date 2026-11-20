@@ -9,6 +9,7 @@
   const served = Boolean(window.__factoryToken);
   let data = { issues: [], projects: [] }, selected = null, tab = 'usage', view = 'work', scope = 'task', query = '', pending = null;
   let rates = { ...DEFAULT_ASSUMPTIONS }, object = 'bulb';
+  let report = null, reportDay = '', reportPlain = '', reportBusy = false;
   let setup = null, editing = null, gh = null, ghError = '', ghLoading = false, ghRepo = '', ghQuery = '', projectQuery = '';
   let ghFilter = { who: 'assigned', login: '', state: 'open', label: '' };
   // Mirrors the WHO modes in lib/github.mjs.
@@ -30,9 +31,10 @@
   function show(next) {
     view = next;
     document.querySelectorAll('[data-view]').forEach(b => { b.setAttribute('aria-pressed', b.dataset.view === view); if (b.dataset.view === view) $('view-title').textContent = b.textContent; });
-    ['work', 'github', 'projects', 'workflow', 'activity'].forEach(id => { $(id).hidden = id !== view; });
+    ['work', 'github', 'report', 'projects', 'workflow', 'activity'].forEach(id => { $(id).hidden = id !== view; });
     if (view === 'projects') loadSetup();
     if (view === 'workflow') workflow.open();
+    if (view === 'report' && !report) loadReport();
     if (view === 'github' && !gh && !ghLoading) loadGithub();
   }
   function checklist() {
@@ -158,6 +160,50 @@
     renderProjectCards();
   }
   $('projects').addEventListener('input', e => { if (e.target.id === 'project-search') { projectQuery = e.target.value; renderProjectCards(); } });
+  const dayOf = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  async function loadReport(day = reportDay || dayOf(new Date())) {
+    reportDay = day; reportPlain = ''; report = null; renderReport();
+    if (!served) return;
+    try {
+      const response = await fetch(`/api/report?day=${encodeURIComponent(day)}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not build the report.');
+      if (day === reportDay) report = result;
+    } catch (error) { report = { error: error.message }; }
+    renderReport();
+  }
+  function renderReport() {
+    const head = '<div><h1>Daily report</h1><p class="fd-desc">What was recorded for one day: factory tasks, your commits and your pull requests in the registered projects.</p></div>';
+    if (!served) { $('report').innerHTML = `<header class="fd-page-head">${head}</header><p class="fd-blank">This view needs the local server. Run <code>factory board</code>.</p>`; return; }
+    const today = dayOf(new Date());
+    const controls = `<div class="fd-actions"><button class="fd-btn" type="button" data-report-shift="-1" aria-label="Previous day">←</button><input id="report-day" type="date" aria-label="Day" value="${escape(reportDay)}" max="${today}"><button class="fd-btn" type="button" data-report-shift="1" aria-label="Next day" ${reportDay >= today ? 'disabled' : ''}>→</button><button class="fd-btn" type="button" data-report-day="${today}" ${reportDay === today ? 'disabled' : ''}>Today</button></div>`;
+    let body = '<p class="fd-blank">Collecting the day…</p>';
+    if (report?.error) body = `<p class="fd-blank fd-failed" role="alert">${escape(report.error)}</p>`;
+    else if (report) {
+      const tasks = report.tasks.length ? `<h2 class="fd-section">Tasks <span>${report.tasks.length}</span></h2><ul class="fd-issues">${report.tasks.map(t => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(t.url, t.title)}</p><p class="fd-issue-meta"><span class="fd-chip">${escape(t.project)}</span><span>${t.kind === 'review' ? 'PR ' : ''}#${escape(t.number)}</span>${t.milestones.map(m => `<span class="fd-badge fd-badge-ok">${escape(m)}</span>`).join('')}<span>${t.from && t.from !== t.to ? `${escape(t.from)} → ${escape(t.to)}` : `at ${escape(t.to)}`}</span>${t.checks.passed + t.checks.failed ? `<span>${t.checks.passed} checks passed, ${t.checks.failed} failed</span>` : ''}${t.prUrl ? externalLink(t.prUrl, 'pull request') : ''}</p></div></li>`).join('')}</ul>` : '';
+      const prs = [...report.pullRequests.opened.map(p => ['opened', p]), ...report.pullRequests.merged.map(p => ['merged', p])];
+      const pulls = prs.length ? `<h2 class="fd-section">Pull requests <span>${prs.length}</span></h2><ul class="fd-issues">${prs.map(([what, p]) => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(p.url, p.title)}</p><p class="fd-issue-meta"><span class="fd-badge fd-badge-ok">${what}</span><span>${escape(p.repo)}#${escape(p.number)}</span></p></div></li>`).join('')}</ul>` : '';
+      const commits = report.commits.length ? `<h2 class="fd-section">Commits <span>${report.commits.reduce((n, c) => n + c.count, 0)}</span></h2>${report.commits.map(c => `<details class="fd-panel fd-general"><summary>${escape(c.project)} · ${c.count}</summary><ul class="fd-asset-list">${c.commits.map(x => `<li><code>${escape(x.sha)}</code><span>${escape(x.subject)}</span></li>`).join('')}</ul></details>`).join('')}` : '';
+      body = `<div class="fd-wf-grid"><section class="fd-panel"><div class="fd-editor-head"><h3>Summary from the records</h3><button class="fd-btn" type="button" data-copy="report-summary">Copy</button></div><pre id="report-summary" class="fd-report">${escape(report.summary)}</pre></section><section class="fd-panel"><div class="fd-editor-head"><h3>In plain English</h3>${reportPlain ? '<button class="fd-btn" type="button" data-copy="report-plain">Copy</button>' : ''}</div>${reportPlain ? `<pre id="report-plain" class="fd-report">${escape(reportPlain)}</pre><p class="fd-caption">Written by Claude from the summary on the left. Check it against the records before you send it.</p><button class="fd-btn" type="button" id="report-write" ${reportBusy ? 'disabled' : ''}>${reportBusy ? 'Writing…' : 'Write it again'}</button>` : `<p class="fd-caption" style="margin-top:12px">Claude Code on this machine can rewrite the summary as a few short sentences for someone who does not read commit messages. It receives only the summary text on the left and has no tools. It takes up to a minute.</p><button class="fd-btn fd-primary" type="button" id="report-write" ${reportBusy ? 'disabled' : ''}>${reportBusy ? 'Writing…' : 'Write it in plain English'}</button>`}<p id="report-error" class="fd-failed" role="alert"></p></section></div>${tasks}${pulls}${commits}${report.pullRequests.error ? `<p class="fd-caption fd-page-foot">${escape(report.pullRequests.error)}</p>` : ''}`;
+    }
+    $('report').innerHTML = `<header class="fd-page-head">${head}${controls}</header>${body}`;
+  }
+  $('report').addEventListener('change', e => { if (e.target.id === 'report-day' && e.target.value) loadReport(e.target.value); });
+  $('report').addEventListener('click', async e => {
+    const shift = e.target.closest('[data-report-shift]'), copy = e.target.closest('[data-copy]');
+    if (shift) { const d = new Date(`${reportDay}T12:00:00`); d.setDate(d.getDate() + Number(shift.dataset.reportShift)); loadReport(dayOf(d)); }
+    if (e.target.dataset.reportDay) loadReport(e.target.dataset.reportDay);
+    if (copy) {
+      try { await navigator.clipboard.writeText($(copy.dataset.copy).textContent); notice('Report copied.'); }
+      catch { notice('Clipboard unavailable. Select the text and copy it.'); }
+    }
+    if (e.target.id === 'report-write' && !reportBusy) {
+      const day = reportDay;
+      reportBusy = true; renderReport();
+      try { const result = await post('/api/report/write', { day }); if (day === reportDay) reportPlain = result.text; reportBusy = false; renderReport(); }
+      catch (error) { reportBusy = false; renderReport(); if ($('report-error')) $('report-error').textContent = error.message; }
+    }
+  });
   const gateRow = (g = {}) => `<div class="fd-gate" data-cwd="${escape(g.cwd || '')}"><label>Name<input data-gate="name" required value="${escape(g.name || '')}" placeholder="verify"></label><label>Command<input data-gate="cmd" required value="${escape(g.cmd || '')}" placeholder="npm run verify"></label><button type="button" class="fd-btn" data-drop-gate>Remove</button></div>`;
   function openProject(mode, p) {
     editing = { mode, key: p.key, dir: p.dir, baseBranch: p.baseBranch, install: p.install || '' };

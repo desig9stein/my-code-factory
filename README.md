@@ -45,6 +45,7 @@ The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foregro
 - A setup checklist: required tools, registered projects, projects without a gate, hook status.
 - A Workflow page: per-stage instructions, skills and agents, and per-type checks, for all projects or one. It lists the skills, agents and instruction files a repository already has and proposes where to use them.
 - `factory next <id>`: the brief an agent follows for the current stage.
+- A Daily report: what the factory, your commits and your pull requests recorded for a day, as a short summary. Claude Code can rewrite it in plain English on request. `factory report [today|yesterday|<date>] [--plain]` prints the same.
 - `factory export` and `factory setup --from <file>`: one file that gives a team the same projects, gates and workflow.
 - A new-task dialog that generates the CLI command; task creation still happens in the terminal.
 - Full-task and individual linked-session token counts: uncached input, cache write, cache read, output, and totals.
