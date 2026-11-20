@@ -33,11 +33,13 @@ factory review 'app#123'
 factory help
 ```
 
-The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foreground. `factory board` starts it in the background; `factory board --stop` stops that instance. `FACTORY_PORT` selects another port. The interface refreshes every ten seconds, preserving open forms and explanations until you finish interacting.
+The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foreground. `factory board` starts it in the background; `factory board --stop` stops that instance. `FACTORY_PORT` selects another port. The server tells the page when task data changes, and the page also checks every ten seconds; open forms and explanations are preserved until you finish interacting.
 
 ## Included
 
-- Dark work queue grouped by what needs you, project list, stage activity, and a metrics page.
+- A live board: five columns grouped by what is happening (Understand, Build, Check, Your turn, Ship), with a marker on tasks an agent acted on in the last minute. A list view keeps the queue grouped by what needs you.
+- Agent activity per stage: which tools, skills, subagents and MCP servers were used, with counts. Only names are stored.
+- Project list, stage history, and a metrics page.
 - A task overview that says what the stage needs next, with acceptance criteria, checks, change size, and the text an approval covers.
 - Committed diffs by file with added and removed lines marked, evidence runs with the end of each log inline, task briefs, and review drafts.
 - Backend-checked approval bound to the displayed commit/draft, plus archive with dirty-worktree protection. These buttons do not publish or merge.

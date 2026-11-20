@@ -17,6 +17,8 @@ The CLI writes state and evidence. Never hand-edit `state.json`, evidence record
 
 For PR review use `factory review 'app#123'`. The review worktree is detached. Run checks, write `review.md` beginning with `Verdict: approve|request-changes|comment`, obtain human approval of that exact draft, then post and record `factory posted <id>`. `factory refresh <id>` updates to a new PR head. Never push from a review worktree.
 
+The board shows each task in one of five columns and moves it when its stage changes; cards cannot be dragged, because a stage changes only through `factory advance`. With the Claude Code hooks installed it also shows which tools, skills, subagents and MCP servers were used in each stage. A task with no recorded activity is unknown, not idle: another harness, or a session without the hooks, records nothing.
+
 `factory metrics` reports, per implemented task, whether every gate passed on its first recorded run, the failed gate runs, verifier `fail` verdicts, resets after passing checks, hours to approval and attributed tokens. It derives these from the records; a value with no data prints `n/a`.
 
 Prefer one main builder session, small changes, and verification against observable behavior. After repeated failed corrections, preserve findings and restart with a clearer task; do not automatically discard uncommitted work.

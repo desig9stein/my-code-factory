@@ -41,3 +41,37 @@ test('a call naming app-42 is not attributed to app-4 or to my-app-42', async ()
   assert.equal(namesId('my-app-42', 'app-42'), false);
   assert.equal(namesId('axb-1', 'a.b-1'), false);
 });
+test('hooks record tool, skill, agent and MCP use per stage without keeping arguments', async () => {
+  const { activitySummary, describeCall, recordActivity, tasksOf } = await import('../lib/activity.mjs');
+  const id = 'app-7';
+  const worktree = path.join(root, 'worktrees', id);
+  fs.mkdirSync(path.join(root, 'issues', id), { recursive: true });
+  fs.mkdirSync(worktree, { recursive: true });
+  const task = { id, stage: 'implement', worktree, history: [{ stage: 'intake', at: '2026-01-01T00:00:00.000Z' }, { stage: 'implement', at: '2026-01-01T00:05:00.000Z' }] };
+  const other = { id: 'app-70', stage: 'plan', worktree: path.join(root, 'worktrees', 'app-70'), history: [] };
+  assert.deepEqual(describeCall({ tool_name: 'Bash', tool_input: { command: 'TOKEN=secret /usr/bin/npm test -- --grep "private thing"' } }), { kind: 'tool', label: 'Bash', detail: 'npm' });
+  assert.deepEqual(describeCall({ tool_name: 'mcp__github__issue_read', tool_input: { q: 'x' } }), { kind: 'mcp', label: 'github', detail: 'issue_read' });
+  assert.deepEqual(describeCall({ tool_name: 'Skill', tool_input: { skill: 'factory' } }), { kind: 'skill', label: 'factory', detail: '' });
+  assert.equal(describeCall({ tool_name: 'Agent', tool_input: { subagent_type: 'factory-verifier', prompt: 'p' } }).label, 'factory-verifier');
+  // A call inside the worktree counts without naming the task; a sibling id does not match.
+  const inside = { cwd: path.join(worktree, 'src'), tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: 'TOKEN=secret npm test' } };
+  assert.deepEqual(tasksOf([task, other], inside).map((s) => s.id), [id]);
+  recordActivity([task, other], inside);
+  recordActivity([task, other], { cwd: root, tool_name: 'Edit', tool_input: { file_path: `/x/${id}/a.ts` } });
+  recordActivity([task, other], { cwd: root, tool_name: 'Read', tool_input: { file_path: '/elsewhere' } });
+  const stored = fs.readFileSync(path.join(root, 'issues', id, 'activity.jsonl'), 'utf8');
+  assert.doesNotMatch(stored, /secret|a\.ts|TOKEN/);
+  const summary = activitySummary(task);
+  assert.equal(summary.calls, 2);
+  assert.deepEqual([summary.last.label, summary.last.stage], ['Edit', 'implement']);
+  const stage = (name) => summary.byStage.find((s) => s.stage === name);
+  assert.deepEqual(stage('implement').items, [{ kind: 'tool', label: 'Bash', count: 1 }, { kind: 'tool', label: 'Edit', count: 1 }]);
+  assert.deepEqual([stage('intake').ms, stage('intake').since, stage('implement').since], [300000, null, '2026-01-01T00:05:00.000Z']);
+  // A task no hook ever reported on has unknown activity, not none.
+  assert.equal(activitySummary({ id: 'app-70', stage: 'plan', history: [] }).recorded, false);
+  // Usage is attributed through the recorded call id even when the call never names the task.
+  const file = path.join(root, 'cwd-only.jsonl');
+  fs.writeFileSync(file, JSON.stringify({ type: 'assistant', timestamp: '2026-02-01T00:00:00.000Z', message: { id: 'q', content: [{ type: 'tool_use', id: 'toolu_1', input: { command: 'npm test' } }], usage: { input_tokens: 1, output_tokens: 42 } } }));
+  linkSession(id, file);
+  assert.equal(issueTokens({ id, createdAt: state.createdAt, history: [] }, { force: true }).output, 42);
+});

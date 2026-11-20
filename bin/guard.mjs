@@ -4,8 +4,8 @@
 import fs from 'node:fs';
 import { writeBoard } from '../lib/board.mjs';
 import { decide, inWorkspace } from '../lib/guard.mjs';
-import { namesId } from '../lib/paths.mjs';
-import { listStates } from '../lib/state.mjs';
+import { recordActivity, tasksOf } from '../lib/activity.mjs';
+import { listStates, peekStates } from '../lib/state.mjs';
 import { linkSession } from '../lib/tokens.mjs';
 
 const mode = process.argv[2];
@@ -19,6 +19,14 @@ try {
 try {
   if (mode === 'pre') {
     const d = decide(input);
+    // An allowed call is recorded as it starts, so the board can show work in progress.
+    if (!d.deny) {
+      try {
+        recordActivity(peekStates(), input);
+      } catch {
+        // Recording is best effort and never blocks a tool call.
+      }
+    }
     if (d.deny) {
       process.stdout.write(
         JSON.stringify({
@@ -28,9 +36,8 @@ try {
     }
   } else if (mode === 'post') {
     const states = listStates();
-    const text = `${input.cwd || ''} ${JSON.stringify(input.tool_input || {})}`;
     // Links this session to every issue the tool call names or runs inside.
-    const touched = states.filter((s) => namesId(text, s.id));
+    const touched = tasksOf(states, input);
     for (const s of touched) linkSession(s.id, input.transcript_path);
     // The static board file is rebuilt only when a call concerned a task; the server builds its own data on request.
     if (touched.length) writeBoard();
