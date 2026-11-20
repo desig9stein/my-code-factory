@@ -53,3 +53,10 @@ test('generated hook commands preserve paths containing spaces and shell metacha
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stderr, '');
 });
+
+test('the example settings enable the sandbox and deny a forced push', () => {
+  const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const settings = JSON.parse(fs.readFileSync(path.join(code, 'docs/examples/claude-settings.example.json'), 'utf8'));
+  assert.equal(settings.sandbox.enabled, true);
+  assert.ok(settings.permissions.deny.includes('Bash(git push --force *)'));
+});

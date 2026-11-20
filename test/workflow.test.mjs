@@ -90,11 +90,11 @@ beforeEach(() => {
 });
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-test('without a saved workflow the defaults hold: four types, five plan sections, reproduce only for bugs', () => {
+test('without a saved workflow the defaults hold: four types, six plan sections, reproduce only for bugs', () => {
   const w = resolveWorkflow('app');
   assert.deepEqual(w, defaultWorkflow());
   assert.deepEqual(w.types, ['bug', 'feature', 'docs', 'chore']);
-  assert.deepEqual(w.stages.plan.headings, ['Files', 'Test boundaries', 'Tests', 'Consumer impact', 'Changelog']);
+  assert.deepEqual(w.stages.plan.headings, ['Acceptance criteria', 'Files', 'Test boundaries', 'Tests', 'Consumer impact', 'Changelog']);
   assert.equal(w.maxAttempts, 5);
   assert.deepEqual(w.lessons, []);
   assert.deepEqual(w.stages.reproduce.skipFor, ['feature', 'docs', 'chore']);
@@ -108,7 +108,7 @@ test('a project override wins over the global value, which wins over the default
   saveWorkflow('app', { stages: { plan: { headings: ['Risks'] } } });
   assert.deepEqual(resolveWorkflow('app').stages.plan.headings, ['Risks']);
   assert.deepEqual(resolveWorkflow('other').stages.plan.headings, ['Files']);
-  assert.deepEqual(defaultWorkflow().stages.plan.headings.length, 5);
+  assert.deepEqual(defaultWorkflow().stages.plan.headings.length, 6);
   assert.deepEqual(registry().repos.app.workflow, { stages: { plan: { headings: ['Risks'] } } });
 });
 
@@ -355,7 +355,7 @@ test('an added step sits after its anchor and holds the task until its document 
   saveWorkflow('global', { customStages: [design], stages: { 'design-review': { instructions: 'Write {dir}/design.md.', use: [{ ref: 'design:design-critique', kind: 'skill' }] } } });
   assert.deepEqual(resolveWorkflow('app').order.slice(3, 6), ['plan', 'design-review', 'implement']);
   at('plan', 'feature');
-  write(path.join(DIR, 'plan.md'), '## Files\n\n## Test boundaries\n\n## Tests\n\n## Consumer impact\n\n## Changelog\n');
+  write(path.join(DIR, 'plan.md'), '## Acceptance criteria\n\n- It works.\n\n## Files\n\n## Test boundaries\n\n## Tests\n\n## Consumer impact\n\n## Changelog\n');
   assert.equal(step().moved, true);
   assert.equal(loadState(ID).stage, 'design-review');
   assert.match(step().problems[0], /design\.md is missing or empty/);

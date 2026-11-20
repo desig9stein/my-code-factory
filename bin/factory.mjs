@@ -14,12 +14,13 @@ import { writeBoard } from '../lib/board.mjs';
 import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } from '../lib/checks.mjs';
 import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyChain } from '../lib/evidence.mjs';
 import { factoryRoot, issueDir, subdirOf, workspace, worktreesDir } from '../lib/paths.mjs';
+import { factoryMetrics } from '../lib/metrics.mjs';
 import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
 import { dayFacts, writePlainReport } from '../lib/report.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
-import { advance, approve, archive, capAttempts, gateStatus, inspect, sendBack, unblock, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
+import { acceptanceCriteria, advance, approve, archive, capAttempts, gateStatus, inspect, sendBack, unblock, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
 import { formatTokens, issueTokens } from '../lib/tokens.mjs';
 import { brokenReferences, formatBrief, resolveWorkflow, stageBrief } from '../lib/workflow.mjs';
 import { exists, head, isDirty, listStates, loadState, move, saveState, sync } from '../lib/state.mjs';
@@ -60,6 +61,7 @@ const HELP = `Codeignite
   assets <project>                                     List the skills, agents and instruction files a project has, with proposals
   doctor                                               Compare the registry with the repos
   report [today|yesterday|<date>] [--plain] [--json]   Summarize a day's work; --plain has Claude rewrite it in plain English
+  metrics [--json]                                     First-pass rate, failed runs, resets and time to approval per task
 `;
 
 // One argument after "--" is a whole shell command; several are rejoined with their quoting restored.
@@ -430,6 +432,9 @@ const commands = {
     const state = sync(loadState(id));
     const report = fs.readFileSync(args.report, 'utf8');
     if (report.trim().length < 200) throw new Error('The report is too short. List each claim with the command that checked it and the result.');
+    if (verdict === 'pass' && acceptanceCriteria(id).length && !/acceptance criteria/i.test(report)) {
+      throw new Error(`plan.md lists ${acceptanceCriteria(id).length} acceptance criteria. A passing report needs an "Acceptance criteria" section saying how each one was checked.`);
+    }
     const body = prBodyPath(id);
     const record = addVerdict(state, { verdict, report, prBodySha256: fs.existsSync(body) ? fileSha256(body) : null });
     fs.writeFileSync(path.join(issueDir(id), 'verify.md'), `Verdict: ${verdict}\nSHA: ${record.sha}\nRecorded: ${record.startedAt}\n\n${report}`);
@@ -624,6 +629,21 @@ const commands = {
     for (const p of proposals) console.log(`  - ${p.title}`);
   },
 
+  metrics(args) {
+    const { tasks, summary } = factoryMetrics();
+    if (args.json) return console.log(JSON.stringify({ tasks, summary }, null, 2));
+    if (!tasks.length) return console.log('No implemented tasks recorded yet.');
+    const na = (value, show = String) => (value === null ? 'n/a' : show(value));
+    table(
+      ['TASK', 'TIER', 'TYPE', 'STAGE', 'FIRST PASS', 'FAILED RUNS', 'VERIFIER FAILS', 'RESETS', 'HOURS TO APPROVAL', 'NEW TOKENS'],
+      tasks.map((t) => [t.id, na(t.tier), na(t.type), t.stage, na(t.firstPass, (v) => (v ? 'yes' : 'no')), t.failedGateRuns, t.verifierFails, t.resets, na(t.hoursToApproval, (v) => v.toFixed(1)), na(t.freshTokens, (v) => `${formatTokens(v)}${t.tokensPartial ? ' (partial)' : ''}`)]),
+    );
+    console.log(`\nFirst-pass gate rate: ${na(summary.firstPassRate, (v) => `${Math.round(v * 100)}%`)} (${summary.firstPass} of ${summary.withGateRuns} tasks with gate runs; ${summary.tasks - summary.withGateRuns} without runs are left out)`);
+    console.log(`Median hours to approval: ${na(summary.medianHoursToApproval, (v) => v.toFixed(1))} (${summary.approved} approved)`);
+    console.log(`Failed gate runs: ${summary.failedGateRuns} · verifier fail verdicts: ${summary.verifierFails} · resets after passing checks: ${summary.resets}`);
+    console.log('Derived from recorded evidence and stage history. "n/a" means no data, not zero. Reviews of other people\'s PRs are not counted.');
+  },
+
   help() {
     console.log(HELP);
   },
@@ -654,7 +674,7 @@ function printRecord(state, record) {
 function statusOne(state) {
   sync(state);
   const repo = getRepo(state.repo);
-  console.log(`${state.id}  ${state.title}\n  stage    ${state.blocked ? `BLOCKED (${state.blocked.reason})` : state.stage}, ${age(state.stageSince)} in stage\n  branch   ${state.branch} at ${(head(state) || 'missing').slice(0, 8)}, base origin/${state.base}\n  tree     ${isDirty(state) ? 'DIRTY (uncommitted changes)' : 'clean'}\n  worktree ${state.worktree}\n  commits  ${commitsOnBranch(state).length}\n  PR       ${state.prUrl || 'none'}`);
+  console.log(`${state.id}  ${state.title}\n  tier     ${state.kind === 'review' ? 'review' : state.tier || 'not triaged'}\n  stage    ${state.blocked ? `BLOCKED (${state.blocked.reason})` : state.stage}, ${age(state.stageSince)} in stage\n  branch   ${state.branch} at ${(head(state) || 'missing').slice(0, 8)}, base origin/${state.base}\n  tree     ${isDirty(state) ? 'DIRTY (uncommitted changes)' : 'clean'}\n  worktree ${state.worktree}\n  commits  ${commitsOnBranch(state).length}\n  PR       ${state.prUrl || 'none'}`);
   const t = issueTokens(state, { force: true });
   console.log(`  tokens   ${t.sessions ? `${formatTokens(t.fresh)} new (${formatTokens(t.output)} output, ${formatTokens(t.cacheWrite)} cache write, ${formatTokens(t.input)} input) plus ${formatTokens(t.cacheRead)} cache read, in ${t.messages} model calls that acted on it` : 'no session linked yet'}`);
   if (state.kind === 'review') {

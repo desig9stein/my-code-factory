@@ -69,6 +69,8 @@ Example `repos.json`:
 
 Paths resolve relative to the configured workspace; absolute project paths also work. Project entries override defaults. Gate commands run inside the task worktree; a gate can set `cwd` for a subdirectory. Commands are trusted local shell commands, so review imported configuration before running it.
 
+Each recorded command stops after 30 minutes and is recorded as failed. Set `timeoutMinutes` on a project or on one gate to change that (`0` disables the limit). `trivialMaxFiles` (default 2) is the number of changed files the trivial tier allows. A gate's `cwd` and the `--cwd` option must stay inside the task worktree.
+
 Commit scope checks and maximum commit count are configurable. The original personal AI-attribution restriction is opt-in via `forbidAiAttribution`, not a universal factory policy. Optional metadata such as `notes`, `playbooks`, `consumers`, `prTemplate`, and `changelog` can guide your coding harness; the CLI does not automatically execute Markdown guidance.
 
 Run `factory doctor` to check configuration drift against the local repositories. The board shows projects without a gate in its setup checklist. Configure at least one meaningful verification gate before using a project for implementation work.

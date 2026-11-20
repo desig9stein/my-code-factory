@@ -51,9 +51,9 @@ const write = (file, text) => {
 const commit = (msg) => sh(WT, `git add -A && git commit -q -m "${msg}"`);
 const bash = (command, cwd = WORKSPACE) => decide({ tool_name: 'Bash', tool_input: { command }, cwd });
 const runGates = (...extra) => ['lint', 'test'].map((g) => cli('run', ID, g, ...extra));
-const verdict = (v = 'pass') => {
+const verdict = (v = 'pass', criteria = '## Acceptance criteria\n- add(2, 2) returns 4: checked, exit 0.\n\n') => {
   const report = path.join(tmp, 'report.md');
-  write(report, `Claim: add returns the sum. Checked with node --test test/add.test.mjs, exit 0.\n${'Detail of the check. '.repeat(12)}`);
+  write(report, `${criteria}Claim: add returns the sum. Checked with node --test test/add.test.mjs, exit 0.\n${'Detail of the check. '.repeat(12)}`);
   return cli('verdict', ID, v, '--report', report);
 };
 const PR_BODY = 'Closes #7.\n\n## Summary\n\n`add` returns the sum.\n\n## Type of change\n\n- [x] Bug fix\n';
@@ -197,11 +197,41 @@ test('a reproduction that exits 0 does not count', () => {
   assert.equal(cli('advance', ID).status, 0);
 });
 
-test('plan needs its five sections', () => {
+test('plan needs its sections and at least one acceptance criterion', () => {
   write(path.join(ISSUE, 'plan.md'), '## Files\nlib/add.mjs\n');
-  assert.match(cli('advance', ID).out, /## Consumer impact/);
-  write(path.join(ISSUE, 'plan.md'), '## Files\nlib/add.mjs\n## Test boundaries\nadd()\n## Tests\nadd.test\n## Consumer impact\nNone.\n## Changelog\nNone.\n');
+  const missing = cli('advance', ID).out;
+  assert.match(missing, /## Consumer impact/);
+  assert.match(missing, /## Acceptance criteria/);
+  const rest = '## Files\nlib/add.mjs\n## Test boundaries\nadd()\n## Tests\nadd.test\n## Consumer impact\nNone.\n## Changelog\nNone.\n';
+  write(path.join(ISSUE, 'plan.md'), `## Acceptance criteria\nIt works.\n${rest}`);
+  assert.match(cli('advance', ID).out, /at least one list item/);
+  write(path.join(ISSUE, 'plan.md'), `## Acceptance criteria\n- add(2, 2) returns 4.\n${rest}`);
   assert.equal(cli('advance', ID).status, 0);
+  assert.deepEqual(boardData().issues[0].criteria, ['add(2, 2) returns 4.']);
+});
+
+test('a trivial task skips reproduce and plan, and is sent back when it outgrows the tier', () => {
+  const id = 'demo-11';
+  const wt = path.join(ROOT, 'worktrees', id);
+  assert.equal(cli('new', 'demo#11', '--title', 'Fix a typo').status, 0);
+  assert.equal(cli('advance', id).status, 0);
+  const triage = path.join(ROOT, 'issues', id, 'triage.md');
+  write(triage, 'Type: docs\nScope: one comment.\nVerdict: clear\nTier: tiny\n');
+  assert.match(cli('advance', id).out, /"Tier:" must be one of trivial, standard/);
+  write(triage, 'Type: docs\nScope: one comment.\nVerdict: clear\nTier: trivial\n');
+  assert.equal(cli('advance', id).status, 0);
+  assert.equal(loadState(id).stage, 'implement');
+  for (const f of ['a.md', 'b.md', 'c.md']) write(path.join(wt, f), 'x\n');
+  sh(wt, 'git add -A && git commit -q -m "docs(readme): fix typos"');
+  const big = cli('advance', id);
+  assert.equal(big.status, 1);
+  assert.match(big.out, /at most 2 changed files; this branch changes 3/);
+  write(triage, 'Type: docs\nScope: three files.\nVerdict: clear\nTier: standard\n');
+  assert.equal(cli('advance', id).status, 0);
+  const s = loadState(id);
+  // A docs task has no reproduction, so the raised tier lands on the plan.
+  assert.deepEqual([s.stage, s.tier], ['plan', 'standard']);
+  assert.equal(cli('archive', id, '--delete-branch').status, 0);
 });
 
 test('implement needs a commit and a clean tree', () => {
@@ -262,6 +292,12 @@ test('the PR body must carry the sections the repo CI checks', () => {
   assert.match(r.out, /"## Summary" is missing/);
   write(path.join(ISSUE, 'pr-body.md'), PR_BODY);
   assert.equal(cli('check', ID).status, 0);
+});
+
+test('a passing verdict must answer the acceptance criteria of the plan', () => {
+  const r = verdict('pass', '');
+  assert.equal(r.status, 1);
+  assert.match(r.out, /lists 1 acceptance criteria/);
 });
 
 test('a verdict recorded on a dirty tree does not count', () => {
@@ -338,6 +374,25 @@ test('a re-run cycle reaches pr-opened and logs the PR', () => {
   assert.equal(cli('pr', ID, 'https://github.com/acme/demo/pull/9').status, 0);
   assert.equal(loadState(ID).stage, 'pr-opened');
   assert.match(fs.readFileSync(path.join(WORKSPACE, 'WORK_LOG.md'), 'utf8'), /\[#9\]\(https:\/\/github\.com\/acme\/demo\/pull\/9\) for \[#7\].*opened, awaiting review/);
+});
+
+test('metrics derive first pass, resets and time to approval from the records', async () => {
+  const { factoryMetrics } = await import('../lib/metrics.mjs');
+  const { tasks, summary } = factoryMetrics();
+  const t = tasks.find((x) => x.id === ID);
+  assert.equal(t.firstPass, true);
+  assert.equal(t.resets, 1);
+  assert.equal(t.failedGateRuns, 0);
+  assert.equal(typeof t.hoursToApproval, 'number');
+  // No transcript is linked yet: usage is unknown, not zero.
+  assert.equal(t.freshTokens, null);
+  // Archived tasks that never ran a gate stay out of the rate.
+  assert.equal(tasks.find((x) => x.id === 'demo-11').firstPass, null);
+  assert.deepEqual([summary.withGateRuns, summary.firstPass, summary.firstPassRate], [1, 1, 1]);
+  const out = cli('metrics').out;
+  assert.match(out, /First-pass gate rate: 100% \(1 of 1 tasks with gate runs; 2 without runs are left out\)/);
+  assert.match(out, /demo-11 .* n\/a/);
+  assert.equal(JSON.parse(cli('metrics', '--json').out).summary.resets, 1);
 });
 
 test('an edited evidence record is reported and stops advance', () => {
