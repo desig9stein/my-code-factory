@@ -70,7 +70,7 @@
     const items = [...data.issues].sort((a, b) => (b.blocked || b.stage === 'ready' ? 1 : 0) - (a.blocked || a.stage === 'ready' ? 1 : 0));
     const shown = items.filter(i => `${i.title} ${i.repo} ${i.id}`.toLowerCase().includes(query.toLowerCase()));
     $('task-count').textContent = data.issues.length;
-    $('tasks').innerHTML = shown.map(i => `<button class="fd-row" data-task="${escape(i.id)}" aria-pressed="${i.id === selected}"><span class="fd-repo"><span>${escape(i.repo)}</span><span>${i.kind === 'review' ? 'PR ' : ''}#${escape(i.issue)}</span></span><strong>${escape(i.title)}</strong><span class="fd-status ${i.blocked ? 'fd-failed' : ''}">${escape(status(i))}</span><span class="fd-tokens">${i.tokens.availability === 'unavailable' ? 'Usage unavailable' : `${compact(i.tokens.fresh)} new tokens${i.tokens.availability === 'partial' ? ' · partial' : ''}`}</span></button>`).join('') || '<p class="fd-queue-note">No matching tasks.</p>';
+    $('tasks').innerHTML = shown.map(i => `<button class="fd-row" data-task="${escape(i.id)}" aria-pressed="${i.id === selected}"><span class="fd-repo"><span>${escape(i.repo)}</span><span>${i.kind === 'review' ? 'PR ' : ''}#${escape(i.issue)}</span></span><strong>${escape(i.title)}</strong><span class="fd-status ${i.blocked ? 'fd-failed' : ''}">${escape(status(i))}</span><span class="fd-tokens">${i.tokens.availability === 'unavailable' ? 'Usage unavailable' : `${compact(i.tokens.fresh)} new tokens${i.tokens.availability === 'partial' ? ' · partial' : ''}`}</span></button>`).join('') || `<p class="fd-queue-note">${data.issues.length ? 'No task matches this filter.' : 'No tasks in flight yet.'}</p>`;
   }
   function renderDetail() {
     const i = task();

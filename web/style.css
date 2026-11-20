@@ -221,3 +221,21 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark .fd-locate{display:flex;gap:8px;align-items:center;max-width:640px;margin-top:12px}#factory-dark .fd-locate label{flex:1;margin:0}#factory-dark #locate-error:empty{display:none}#factory-dark #locate-error{font-size:14px;margin:10px 0 0}
 #factory-dark .fd-top-note{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:46vw}
 #factory-dark .fd-pending{margin-top:12px}#factory-dark .fd-pending code{color:var(--fd-muted)}
+/* One control height, so fields, selects, segmented controls and buttons line up in a row. */
+#factory-dark{--fd-control:40px}
+#factory-dark input:not([type=checkbox]):not([type=radio]),#factory-dark select{height:var(--fd-control);padding:0 12px;font-size:14px}
+#factory-dark textarea{padding:10px 12px;font-size:14px}
+#factory-dark .fd-btn{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px}
+#factory-dark input:focus-visible,#factory-dark select:focus-visible,#factory-dark textarea:focus-visible{outline:2px solid var(--fd-accent);outline-offset:-1px;border-color:var(--fd-accent)}
+#factory-dark .fd-work{display:flex;flex-direction:column}#factory-dark .fd-split{flex:1}#factory-dark .fd-queue-note{margin:0}
+#factory-dark .fd-filter{align-items:flex-end;gap:14px}#factory-dark .fd-filter>label{gap:6px}#factory-dark .fd-filter .fd-btn{height:var(--fd-control);padding:0 16px}
+#factory-dark .fd-seg legend{margin-bottom:6px;line-height:1.55;float:left;width:100%}#factory-dark .fd-seg>div{clear:both;height:var(--fd-control);box-sizing:border-box}#factory-dark .fd-seg label{display:flex}#factory-dark .fd-seg span{display:flex;align-items:center;padding:0 16px}
+#factory-dark .fd-seg input{height:100%}
+#factory-dark dialog .fd-actions{margin-top:18px}#factory-dark dialog label{margin:14px 0}#factory-dark dialog h2{margin:0 0 8px}
+#factory-dark .fd-gates{padding:10px 14px 14px;margin:18px 0 12px}#factory-dark .fd-gate{align-items:end;gap:10px;margin-bottom:12px}#factory-dark .fd-gate label{margin:0;gap:6px}#factory-dark .fd-gate .fd-btn{height:var(--fd-control);margin:0}#factory-dark .fd-gates>.fd-btn{margin-top:2px}
+#factory-dark .fd-locate .fd-btn,#factory-dark .fd-page-head .fd-actions .fd-btn{height:var(--fd-control)}
+#factory-dark .fd-combo-box input{font-size:14px}#factory-dark .fd-combo ul{margin-top:6px;padding:6px}#factory-dark .fd-combo [role=option]{padding:9px 12px;gap:4px}#factory-dark .fd-combo [role=option]+[role=option]{margin-top:2px}
+#factory-dark .fd-combo-name{gap:6px 8px}#factory-dark .fd-combo-name .fd-chip{margin:0}
+#factory-dark .fd-inline select{height:32px}#factory-dark .fd-stat{display:inline-flex;align-items:center;height:var(--fd-control);padding:0 12px}
+@media(max-width:680px){#factory-dark .fd-gate .fd-btn{justify-self:start}}
+@media(pointer:coarse){#factory-dark input:not([type=checkbox]):not([type=radio]),#factory-dark select{height:44px;font-size:16px}}
