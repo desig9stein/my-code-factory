@@ -714,11 +714,13 @@ test('the board pushes the approved branch and opens the pull request, and refus
     assert.match((await (await create({ 'x-factory-token': token }, { id: ID })).json()).error, /changed after you approved it/);
     assert.equal(sh(tmp, `git --git-dir "${path.join(tmp, 'app.git')}" branch --list task`), '');
     at('approved', 'feature', { gatesSha: head, approvedSha: head, approvedDraftSha256: fileSha256(path.join(DIR, 'pr-body.md')) });
-    const made = await create({ 'x-factory-token': token }, { id: ID, title: 'fix(app): a title', draft: true });
+    assert.match((await (await create({ 'x-factory-token': token }, { id: ID, reviewers: ['a; rm -rf /'] })).json()).error, /"a; rm -rf \/" is not a GitHub login/);
+    assert.equal(sh(tmp, `git --git-dir "${path.join(tmp, 'app.git')}" branch --list task`), '');
+    const made = await create({ 'x-factory-token': token }, { id: ID, title: 'fix(app): a title', draft: true, reviewers: ['@octocat', 'acme/frontend'], assignees: ['@me'] });
     assert.equal(made.status, 200, await made.clone().text());
     assert.equal((await made.json()).url, 'https://github.com/acme/app/pull/12');
     assert.match(sh(tmp, `git --git-dir "${path.join(tmp, 'app.git')}" rev-parse task`), new RegExp(head));
-    assert.deepEqual(fs.readFileSync(path.join(tmp, 'gh-args.txt'), 'utf8').trim().split('\n'), ['pr', 'create', '--repo', 'acme/app', '--base', 'main', '--head', 'task', '--title', 'fix(app): a title', '--body-file', path.join(DIR, 'pr-body.md'), '--draft']);
+    assert.deepEqual(fs.readFileSync(path.join(tmp, 'gh-args.txt'), 'utf8').trim().split('\n'), ['pr', 'create', '--repo', 'acme/app', '--base', 'main', '--head', 'task', '--title', 'fix(app): a title', '--body-file', path.join(DIR, 'pr-body.md'), '--reviewer', 'octocat', '--reviewer', 'acme/frontend', '--assignee', '@me', '--draft']);
     assert.deepEqual([loadState(ID).stage, loadState(ID).prUrl], ['pr-opened', 'https://github.com/acme/app/pull/12']);
   } finally {
     process.env.PATH = oldPath;

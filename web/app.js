@@ -675,6 +675,18 @@
       $('pr-create-form').reset(); $('pr-create-error').textContent = '';
       $('pr-create-form').elements.title.value = i.prTitle || i.title;
       $('pr-text').textContent = `${i.repo} #${i.issue}: this pushes the branch ${i.branch} at commit ${(i.head || '').slice(0, 12)} and opens a pull request into ${i.base}. It is the version you approved. It becomes public on GitHub at once.`;
+      // Starts from the people chosen for this project last time; without a memory, you are the assignee.
+      let last = null;
+      try { last = JSON.parse(localStorage.getItem(`factory-pr-${i.repo}`)); } catch { /* No remembered choice. */ }
+      picked = { reviewers: last?.reviewers || [], assignees: last?.assignees || ['@me'] };
+      for (const radio of $('pr-create-form').elements.draft) radio.checked = radio.value === (last?.draft ? '1' : '');
+      $('pr-people').innerHTML = ''; $('pr-people-note').textContent = 'Loading who can review…';
+      drawPicked();
+      fetch(`/api/people?project=${encodeURIComponent(i.repo)}`).then(r => r.json()).then(result => {
+        const others = (result.people || []).filter(login => login !== result.me);
+        $('pr-people').innerHTML = others.map(login => `<option value="${escape(login)}">`).join('') + '<option value="@me">';
+        $('pr-people-note').textContent = others.length ? `${others.length} people can review or be assigned in this repository. "@me" is you${result.me ? ` (${result.me})` : ''}. You cannot review your own pull request.` : 'GitHub did not return the list of people. You can still type a login.';
+      }, () => { $('pr-people-note').textContent = 'The list of people could not be loaded. You can still type a login.'; });
       $('pr-dialog').showModal(); $('pr-create-form').elements.title.focus();
     }
     if (e.target.closest('[data-post-review]')) {
@@ -717,13 +729,37 @@
     try { await post('/api/pr', { id, url: e.target.elements.url.value }); notice(`${id}: pull request recorded.`); refresh(); }
     catch (error) { e.target.parentElement.querySelector('#pr-error').textContent = error.message; }
   });
+  // The reviewers and assignees chosen in the pull request dialog.
+  let picked = { reviewers: [], assignees: [] };
+  function drawPicked() {
+    for (const box of document.querySelectorAll('#pr-dialog [data-people]')) {
+      const list = picked[box.dataset.people];
+      box.querySelector('.fd-picked').innerHTML = list.map(login => `<li><span class="fd-chip">${escape(login)}</span><button type="button" class="fd-link" data-drop-person="${escape(login)}" aria-label="Remove ${escape(login)}">Remove</button></li>`).join('') || '<li class="fd-caption">Nobody</li>';
+    }
+  }
+  function addPerson(input) {
+    const login = input.value.trim().replace(/^@(?!me$)/, ''), list = picked[input.closest('[data-people]').dataset.people];
+    if (login && !list.includes(login)) list.push(login);
+    input.value = ''; drawPicked();
+  }
+  $('pr-dialog').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('[data-person]')) { e.preventDefault(); addPerson(e.target); } });
+  // Choosing a suggestion fills the field in one step, which a typed character never does.
+  $('pr-dialog').addEventListener('input', e => { if (e.target.matches('[data-person]') && [...$('pr-people').options].some(o => o.value === e.target.value) && e.inputType !== 'insertText') addPerson(e.target); });
+  $('pr-dialog').addEventListener('click', e => {
+    const drop = e.target.closest('[data-drop-person]');
+    if (drop) { const key = drop.closest('[data-people]').dataset.people; picked[key] = picked[key].filter(login => login !== drop.dataset.dropPerson); drawPicked(); }
+  });
   $('cancel-pr').onclick = () => $('pr-dialog').close();
   $('pr-create-form').onsubmit = async e => {
     e.preventDefault();
     const form = e.target;
     $('confirm-pr').disabled = true; $('confirm-pr').textContent = 'Pushing and creating…'; $('pr-create-error').textContent = '';
     try {
-      const result = await post('/api/pr/create', { id: pending.id, title: form.elements.title.value, draft: form.elements.draft.checked });
+      // A login still sitting in a field counts as chosen.
+      for (const input of form.querySelectorAll('[data-person]')) if (input.value.trim()) addPerson(input);
+      const draft = form.elements.draft.value === '1';
+      const result = await post('/api/pr/create', { id: pending.id, title: form.elements.title.value, draft, reviewers: picked.reviewers, assignees: picked.assignees });
+      try { localStorage.setItem(`factory-pr-${task()?.repo}`, JSON.stringify({ draft, ...picked })); } catch { /* The choice is not remembered. */ }
       notice(`${pending.id}: pull request created. ${result.url}`);
       $('pr-dialog').close(); pending = null; refresh();
     } catch (error) { $('pr-create-error').textContent = error.message; }
