@@ -19,6 +19,18 @@ For PR review use `factory review 'app#123'`. The review worktree is detached. R
 
 Prefer one main builder session, small changes, and verification against observable behavior. After repeated failed corrections, preserve findings and restart with a clearer task; do not automatically discard uncommitted work.
 
+## Starting a task and an agent from the board
+
+"New task", and "Start task" on a GitHub issue, create the task from the board: the server runs the same intake as `factory new` or `factory review`, so the issue is fetched and the branch and worktree are created without a terminal. The command is still shown for those who prefer it.
+
+A task's page then offers three ways to put an agent on it, each with the first message filled in ("Work on the Codeignite task <id> with the factory skill", plus the command that prints the brief):
+
+- **Open in terminal** uses the `claude-cli://open` link of Claude Code. It opens a terminal session in the task's worktree with the message typed in; you press Enter. The link works after `claude` has been used interactively once on the machine.
+- **Open in VS Code** uses the `vscode://anthropic.claude-code/open` link. It opens a new Claude Code chat in the VS Code window you last used, so open the task's worktree there first. The link cannot choose the folder.
+- **Copy the prompt** is for JetBrains IDEs and any other agent, which have no such link.
+
+The board does not run an agent by itself in the background. An unattended run needs a permission mode that lets the agent edit and run commands without asking, and that choice is left to you.
+
 ## Configuring the workflow
 
 The Workflow page of the board edits the workflow for all projects or for one project. Defaults apply first, then the "All projects" values, then the project's. Global changes are stored in `workflow.json` in the data directory, project changes under `workflow` in the project's `repos.json` entry. Only changed values are stored.

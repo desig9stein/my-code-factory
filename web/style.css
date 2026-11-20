@@ -239,3 +239,7 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark .fd-inline select{height:32px}#factory-dark .fd-stat{display:inline-flex;align-items:center;height:var(--fd-control);padding:0 12px}
 @media(max-width:680px){#factory-dark .fd-gate .fd-btn{justify-self:start}}
 @media(pointer:coarse){#factory-dark input:not([type=checkbox]):not([type=radio]),#factory-dark select{height:44px;font-size:16px}}
+#factory-dark #new-error:empty,#factory-dark #reject-error:empty{display:none}#factory-dark #new-error,#factory-dark #reject-error{color:var(--fd-red);font-size:14px;margin:12px 0 0}#factory-dark dialog .fd-more{padding:14px 0 0}#factory-dark dialog .fd-more pre{margin:10px 0}
+#factory-dark .fd-launch{margin:4px 0 14px;padding:12px 14px;border:1px solid var(--fd-line);border-radius:10px;background:var(--fd-card)}#factory-dark .fd-launch-title{display:block;font-size:13px;color:var(--fd-muted);margin-bottom:10px}
+#factory-dark a.fd-btn{text-decoration:none;color:var(--fd-fg)}#factory-dark a.fd-btn.fd-primary{background:#d1c6af;color:#191a18;border-color:#d1c6af;font-weight:500}#factory-dark a.fd-btn:hover{background:#2b2e2d}#factory-dark a.fd-btn.fd-primary:hover{background:#e4dac5}
+#factory-dark .fd-launch-help{margin-top:10px;font-size:13px;color:var(--fd-muted)}#factory-dark .fd-launch-help ul{margin:8px 0 0}#factory-dark .fd-launch-help li{margin:6px 0}#factory-dark .fd-launch-help strong{color:var(--fd-fg);font-weight:500}#factory-dark .fd-launch-help code{overflow-wrap:anywhere}

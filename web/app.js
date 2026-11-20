@@ -66,6 +66,14 @@
     try { localStorage.setItem('factory-scenario-v1', JSON.stringify({ rates, object })); }
     catch { notice('Assumptions apply now, but this browser could not save them for next time.'); }
   }
+  // Links that open an agent session on the task, with the first message filled in.
+  function launch(i) {
+    if (!i.prompt || !i.worktree || i.stage === 'pr-opened' || i.stage === 'posted') return '';
+    const waiting = i.stage === 'ready' && !i.blocked;
+    const terminal = `claude-cli://open?q=${encodeURIComponent(i.prompt)}&cwd=${encodeURIComponent(i.worktree)}`;
+    const vscode = `vscode://anthropic.claude-code/open?prompt=${encodeURIComponent(i.prompt)}`;
+    return `<div class="fd-launch"><span class="fd-launch-title">${waiting ? 'This task waits for your review. To continue with an agent afterwards:' : 'Start the agent on this task'}</span><div class="fd-actions"><a class="fd-btn ${waiting ? '' : 'fd-primary'}" href="${escape(terminal)}">Open in terminal</a><a class="fd-btn" href="${escape(vscode)}">Open in VS Code</a><button class="fd-btn" type="button" data-copy-prompt>Copy the prompt</button></div><details class="fd-launch-help"><summary>How this works</summary><ul><li><strong>Terminal</strong> opens Claude Code in the task's folder with the message typed in. Press Enter to send it. It works after you have used <code>claude</code> in a terminal once on this machine.</li><li><strong>VS Code</strong> opens a new Claude Code chat in the window you last used, with the message typed in. Open the task's folder there first: <code>${escape(i.worktree)}</code></li><li><strong>WebStorm and other editors</strong> have no such link. Copy the prompt and paste it into the Claude panel or its terminal.</li></ul></details></div>`;
+  }
   function renderQueue() {
     const items = [...data.issues].sort((a, b) => (b.blocked || b.stage === 'ready' ? 1 : 0) - (a.blocked || a.stage === 'ready' ? 1 : 0));
     const shown = items.filter(i => `${i.title} ${i.repo} ${i.id}`.toLowerCase().includes(query.toLowerCase()));
@@ -81,7 +89,7 @@
     const tabs = [['changes', 'Changes'], ['evidence', 'Evidence'], ['brief', 'Task brief'], ['usage', 'Usage']];
     if (i.kind === 'review') tabs.splice(1, 0, ['review', 'Review draft']);
     if (!tabs.some(([key]) => key === tab)) tab = 'usage';
-    $('detail').innerHTML = `<div class="fd-head"><div class="fd-kicker">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span>${escape(status(i))}</span></div><h1>${escape(i.title)}</h1>${i.blocked ? `<p class="fd-warning">${escape(i.blocked)}</p>` : ''}<div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div><button class="fd-usage-strip" data-tab="usage">${i.tokens.availability === 'unavailable' ? 'Usage unavailable · link a supported session' : `${number(i.tokens.fresh)} new tokens · ${number(i.tokens.cacheRead)} cache-read tokens · ${i.tokens.sessions} linked session(s)`}</button></div><div class="fd-tabs" aria-label="Task sections">${tabs.map(([key, title]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${title}</button>`).join('')}</div><div class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served && i.approvalKey ? '<button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button>' : ''}${served ? '<button class="fd-btn" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>${i.approvalKey ? 'Approval covers the displayed commit and draft. It does not push, merge, or post.' : 'Checks and evidence stay tied to their recorded commit.'}</small></footer>`;
+    $('detail').innerHTML = `<div class="fd-head"><div class="fd-kicker">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span>${escape(status(i))}</span></div><h1>${escape(i.title)}</h1>${i.blocked ? `<p class="fd-warning">${escape(i.blocked)}</p>` : ''}${launch(i)}<div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div><button class="fd-usage-strip" data-tab="usage">${i.tokens.availability === 'unavailable' ? 'Usage unavailable · link a supported session' : `${number(i.tokens.fresh)} new tokens · ${number(i.tokens.cacheRead)} cache-read tokens · ${i.tokens.sessions} linked session(s)`}</button></div><div class="fd-tabs" aria-label="Task sections">${tabs.map(([key, title]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${title}</button>`).join('')}</div><div class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served && i.approvalKey ? '<button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button>' : ''}${served ? '<button class="fd-btn" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>${i.approvalKey ? 'Approval covers the displayed commit and draft. It does not push, merge, or post.' : 'Checks and evidence stay tied to their recorded commit.'}</small></footer>`;
     if (tab === 'usage') renderUsage(i);
     else if (tab === 'brief') $('body').innerHTML = doc('Next step for the agent', i.brief) + doc('Issue or pull request', i.docs.issue || i.docs.pr) + doc('Triage', i.docs.triage) + doc('Open questions', i.docs.questions) + doc('Plan', i.docs.plan) + doc('PR description', i.docs.prBody);
     else if (tab === 'review') $('body').innerHTML = doc('Review draft', i.docs.review);
@@ -336,6 +344,9 @@
   $('detail').onclick = e => {
     const button = e.target.closest('[data-tab]');
     if (button) { tab = button.dataset.tab; renderDetail(); }
+    if (e.target.closest('[data-copy-prompt]')) {
+      navigator.clipboard.writeText(task().prompt).then(() => notice('Prompt copied. Paste it into your agent.'), () => notice('Clipboard unavailable. Run "factory next" for this task in your agent instead.'));
+    }
     const action = e.target.closest('[data-action]');
     if (action?.dataset.action === 'reject') {
       const i = task();
@@ -378,14 +389,24 @@
     const project = $('new-project').value, n = $('new-number').value;
     const valid = /^[1-9]\d*$/.test(n) && project;
     $('new-command').textContent = valid ? `factory ${$('new-kind').value} '${project}#${n}'` : 'Choose a project and enter a number.';
-    $('copy-command').disabled = !valid;
+    $('copy-command').disabled = !valid; $('start-task').disabled = !valid || !served;
   }
   function openNew(project, number) {
     $('new-project').innerHTML = data.projects.map(p => `<option value="${escape(p.key)}" ${p.key === project ? 'selected' : ''}>${escape(p.key)}</option>`).join('');
     if (number) { $('new-kind').value = 'new'; $('new-number').value = number; }
-    newCommand(); $('new-dialog').showModal();
+    $('new-error').textContent = ''; newCommand(); $('new-dialog').showModal();
   }
   $('new-task').onclick = () => openNew();
+  $('start-task').onclick = async () => {
+    const project = $('new-project').value, number = Number($('new-number').value), kind = $('new-kind').value;
+    $('start-task').disabled = true; $('start-task').textContent = 'Starting…'; $('new-error').textContent = '';
+    try {
+      const result = await post('/api/task/start', { project, number, kind });
+      $('new-dialog').close(); selected = result.id; tab = 'brief'; show('work'); refresh();
+      notice(`${result.id}: started. Its branch and worktree are ready.`);
+    } catch (error) { $('new-error').textContent = error.message; }
+    finally { $('start-task').textContent = 'Start task'; newCommand(); }
+  };
   ['new-project', 'new-kind', 'new-number'].forEach(id => $(id).oninput = newCommand);
   $('copy-command').onclick = async () => {
     try { await navigator.clipboard.writeText($('new-command').textContent); notice('Task command copied. Run it in your terminal.'); }
@@ -396,7 +417,7 @@
     if (next.workspace) $('workspace-note').textContent = `WORKSPACE ${next.workspace}`;
     if (next.stamp === data.stamp) return;
     // Keep drafts and open explanations stable while the user interacts.
-    if (data.stamp && (document.querySelector('dialog[open], #detail details[open]:not(.fd-setup)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;
+    if (data.stamp && (document.querySelector('dialog[open], #detail details[open]:not(.fd-setup):not(.fd-launch-help)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;
     data = next;
     if (!data.issues.some(i => i.id === selected)) selected = data.issues[0]?.id || null;
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()} · usage may lag up to 60 s`;

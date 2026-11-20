@@ -245,6 +245,24 @@ test('a repository outside the workspace is found by its folder and registered w
   assert.equal((await call('/api/project/remove', { key: 'omega' })).status, 200);
 });
 
+test('the board starts a task itself, and the task carries a prompt and a folder for the agent', async () => {
+  const start = (body, headers) => call('/api/task/start', body, headers);
+  assert.equal((await start({ project: 'gamma', number: 2, kind: 'new' }, {})).status, 403);
+  assert.match((await (await start({ project: 'nope', number: 2, kind: 'new' })).json()).error, /Unknown project "nope"/);
+  assert.match((await (await start({ project: 'gamma', number: '2; rm -rf', kind: 'new' })).json()).error, /must be a whole number above 0/);
+  assert.match((await (await start({ project: 'gamma', number: 2, kind: 'delete' })).json()).error, /kind must be "new" or "review"/);
+  write(GH_OUT, JSON.stringify({ number: 2, title: 'Add a thing', body: 'Please.', labels: [], url: 'https://github.com/acme/gamma/issues/2' }));
+  const started = await start({ project: 'gamma', number: 2, kind: 'new' });
+  assert.equal(started.status, 200, await started.clone().text());
+  assert.equal((await started.json()).id, 'gamma-2');
+  const data = await (await fetch(`${base}/board-data.js`)).text();
+  const task = JSON.parse(data.slice(data.indexOf('(') + 1, data.lastIndexOf(')'))).issues.find((i) => i.id === 'gamma-2');
+  assert.equal(task.stage, 'intake');
+  assert.equal(task.worktree, path.join(ROOT, 'worktrees', 'gamma-2'));
+  assert.match(task.prompt, /^Work on the Codeignite task gamma-2 with the factory skill\. Start by running: node '.*bin\/factory\.mjs' next gamma-2$/);
+  assert.match((await (await start({ project: 'gamma', number: 2, kind: 'new' })).json()).error, /gamma-2 already exists at stage "intake"/);
+});
+
 test('the issues query defaults to issues assigned to you in every registered remote', async () => {
   write(GH_OUT, JSON.stringify([
     { number: 1, title: 'In flight', url: 'https://github.com/acme/gamma/issues/1', repository: { nameWithOwner: 'acme/gamma' }, labels: [{ name: 'bug' }], assignees: [{ login: 'me' }], updatedAt: '2026-01-02T00:00:00Z' },

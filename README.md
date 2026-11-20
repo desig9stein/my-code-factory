@@ -49,7 +49,7 @@ The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foregro
 - Suggestions for recommended third-party skills (not bundled) when they are installed.
 - A Daily report: what the factory, your commits and your pull requests recorded for a day, as a short summary. Claude Code can rewrite it in plain English on request. `factory report [today|yesterday|<date>] [--plain]` prints the same.
 - `factory export` and `factory setup --from <file>`: one file that gives a team the same projects, gates and workflow.
-- A new-task dialog that generates the CLI command; task creation still happens in the terminal.
+- Tasks start from the board: it fetches the issue and creates the branch and worktree. A task's page opens a Claude Code session on it in the terminal or VS Code with the first message filled in, or copies the prompt for other editors.
 - Full-task and individual linked-session token counts: uncached input, cache write, cache read, output, and totals.
 - Electricity and carbon scenarios with appliance runtime and driving equivalents, editable assumptions, formulas, source attribution, and explicit exclusions.
 - Issue/review workflows, worktrees, reproducibility checks, evidence integrity checks, and configurable project gates.
