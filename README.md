@@ -43,6 +43,9 @@ The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foregro
 - A GitHub issues view: open issues assigned to you across the registered projects, with a saved filter (assigned, created, mentioning, involving, another login, anyone; state; label) and a per-project filter.
 - Project editing on the Projects page: base branch, install command and verification gates, checked before they are saved.
 - A setup checklist: required tools, registered projects, projects without a gate, hook status.
+- A Workflow page: per-stage instructions, skills and agents, and per-type checks, for all projects or one. It lists the skills, agents and instruction files a repository already has and proposes where to use them.
+- `factory next <id>`: the brief an agent follows for the current stage.
+- `factory export` and `factory setup --from <file>`: one file that gives a team the same projects, gates and workflow.
 - A new-task dialog that generates the CLI command; task creation still happens in the terminal.
 - Full-task and individual linked-session token counts: uncached input, cache write, cache read, output, and totals.
 - Electricity and carbon scenarios with appliance runtime and driving equivalents, editable assumptions, formulas, source attribution, and explicit exclusions.

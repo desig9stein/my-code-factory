@@ -9,10 +9,11 @@ import { fileURLToPath } from 'node:url';
 import { proposeForProject } from '../lib/assets.mjs';
 import { hookSettings, installAgentFiles, installHooks } from '../lib/hooks.mjs';
 import { addProject, discoverProjects, initialize, preflight } from '../lib/setup.mjs';
+import { applyImport, exportConfig, planImport } from '../lib/share.mjs';
 import { writeBoard } from '../lib/board.mjs';
 import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } from '../lib/checks.mjs';
 import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyChain } from '../lib/evidence.mjs';
-import { factoryRoot, issueDir, worktreesDir } from '../lib/paths.mjs';
+import { factoryRoot, issueDir, workspace, worktreesDir } from '../lib/paths.mjs';
 import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
@@ -25,6 +26,9 @@ import { exists, head, isDirty, listStates, loadState, move, saveState, sync } f
 const HELP = `Software factory
 
   setup [--workspace <directory>] [--yes]             Check the tools, initialize, and register every repo in the workspace
+  setup --from <file> [--workspace <directory>]       Set up from a configuration a teammate exported
+  export <file>                                       Write the shareable configuration: projects, gates, workflow
+  import <file> [--yes]                               Apply a shared configuration after showing what it changes
   init --workspace <directory>                        Initialize local configuration (never overwrites it)
   add <key> <directory> [--verify <command>]           Register a project; --remote, --base, --install optional
 
@@ -132,6 +136,10 @@ const commands = {
     if (checks.some((c) => !c.ok && c.required)) throw new Error('A required tool is missing. Fix the FAIL lines above, then run setup again.');
     const result = initialize(typeof args.workspace === 'string' ? args.workspace : process.cwd());
     console.log(`\nConfiguration: ${result.root}\nWorkspace: ${result.workspace}`);
+    if (typeof args.from === 'string') {
+      await commands.import({ ...args, _: [args.from] });
+      return console.log('\nNext:\n  factory board             Open the board\n  factory hooks --install   Add the Claude Code guard hooks, the factory skill and the verifier agent');
+    }
     const found = discoverProjects();
     if (!found.length) console.log('\nNo unregistered GitHub repositories found directly inside the workspace.');
     else {
@@ -156,6 +164,46 @@ const commands = {
     }
     console.log('\nNext:\n  factory board             Open the board; change base branches and gates on its Projects page\n  factory hooks --install   Add the Claude Code guard hooks to your settings');
   },
+  export(args) {
+    const text = `${JSON.stringify(exportConfig(), null, 2)}\n`;
+    if (!args._[0]) return process.stdout.write(text);
+    fs.writeFileSync(path.resolve(args._[0]), text);
+    console.log(`Wrote ${path.resolve(args._[0])}. It holds projects, gates and workflow, and no paths or task data. Share it, or commit it to a team repository.`);
+  },
+
+  async import(args) {
+    if (!args._[0] || !fs.existsSync(args._[0])) throw new Error('import needs the path of a file written by "factory export <file>".');
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(args._[0], 'utf8'));
+    } catch {
+      throw new Error(`${args._[0]} is not JSON.`);
+    }
+    const plan = planImport(data);
+    const changing = plan.projects.filter((p) => p.status === 'add' || p.status === 'update');
+    console.log(`\n${plan.projects.length} projects in the file:\n`);
+    table(['STATUS', 'KEY', 'REMOTE', 'BASE', 'FOLDER'], plan.projects.map((p) => [p.status, p.key, p.remote, p.entry.baseBranch, p.dir ? path.relative(workspace(), p.dir) || '.' : `not cloned (expected ${p.folder})`]));
+    const missing = plan.projects.filter((p) => p.status === 'missing');
+    if (missing.length) console.log(`\nNot cloned, so not registered. Clone them into ${workspace()} and run the import again:\n${missing.map((p) => `  git clone git@github.com:${p.remote}.git ${p.folder}`).join('\n')}`);
+    // Imported commands run in a shell later, so every one is shown before it is accepted.
+    if (changing.length) {
+      console.log('\nCommands this file registers. They run on your machine when a task uses them:\n');
+      for (const p of changing) {
+        if (p.entry.install) console.log(`  ${p.key} install: ${p.entry.install}`);
+        for (const g of p.entry.gates) console.log(`  ${p.key} gate ${g.name}: ${g.cmd}`);
+      }
+    }
+    let yes = args.yes === true;
+    if (!yes && process.stdin.isTTY) {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      yes = !/^n/i.test((await rl.question(`\nApply: ${changing.length} project(s) added or updated, plus the shared defaults and workflow? [Y/n] `)).trim());
+      rl.close();
+    } else if (!yes) return console.log('\nNothing applied: there is no terminal to ask in. Read the commands above, then run the import again with --yes.');
+    if (!yes) return console.log('Nothing applied.');
+    applyImport(plan);
+    console.log(`Applied. ${changing.length} project(s) added or updated; ${plan.projects.filter((p) => p.status === 'same').length} already matched.`);
+  },
+
   add(args) {
     const result = addProject(args._[0], args._[1], args);
     console.log(`Registered ${args._[0]} (${result.remote}, base ${result.baseBranch}).`);

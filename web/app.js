@@ -30,8 +30,9 @@
   function show(next) {
     view = next;
     document.querySelectorAll('[data-view]').forEach(b => { b.setAttribute('aria-pressed', b.dataset.view === view); if (b.dataset.view === view) $('view-title').textContent = b.textContent; });
-    ['work', 'github', 'projects', 'activity'].forEach(id => { $(id).hidden = id !== view; });
+    ['work', 'github', 'projects', 'workflow', 'activity'].forEach(id => { $(id).hidden = id !== view; });
     if (view === 'projects') loadSetup();
+    if (view === 'workflow') workflow.open();
     if (view === 'github' && !gh && !ghLoading) loadGithub();
   }
   function checklist() {
@@ -80,7 +81,7 @@
     if (!tabs.some(([key]) => key === tab)) tab = 'usage';
     $('detail').innerHTML = `<div class="fd-head"><div class="fd-kicker">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span>${escape(status(i))}</span></div><h1>${escape(i.title)}</h1>${i.blocked ? `<p class="fd-warning">${escape(i.blocked)}</p>` : ''}<div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div><button class="fd-usage-strip" data-tab="usage">${i.tokens.availability === 'unavailable' ? 'Usage unavailable · link a supported session' : `${number(i.tokens.fresh)} new tokens · ${number(i.tokens.cacheRead)} cache-read tokens · ${i.tokens.sessions} linked session(s)`}</button></div><div class="fd-tabs" aria-label="Task sections">${tabs.map(([key, title]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${title}</button>`).join('')}</div><div class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served && i.approvalKey ? '<button class="fd-btn fd-primary" data-action="approve">Approve this version</button>' : ''}${served ? '<button class="fd-btn" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>${i.approvalKey ? 'Approval covers the displayed commit and draft. It does not push, merge, or post.' : 'Checks and evidence stay tied to their recorded commit.'}</small></footer>`;
     if (tab === 'usage') renderUsage(i);
-    else if (tab === 'brief') $('body').innerHTML = doc('Issue or pull request', i.docs.issue || i.docs.pr) + doc('Triage', i.docs.triage) + doc('Open questions', i.docs.questions) + doc('Plan', i.docs.plan) + doc('PR description', i.docs.prBody);
+    else if (tab === 'brief') $('body').innerHTML = doc('Next step for the agent', i.brief) + doc('Issue or pull request', i.docs.issue || i.docs.pr) + doc('Triage', i.docs.triage) + doc('Open questions', i.docs.questions) + doc('Plan', i.docs.plan) + doc('PR description', i.docs.prBody);
     else if (tab === 'review') $('body').innerHTML = doc('Review draft', i.docs.review);
     else if (tab === 'evidence') renderEvidence(i);
     else renderChanges(i);
@@ -153,7 +154,7 @@
   function renderProjects() {
     const bare = data.projects.filter(p => !p.gates.length).length;
     const stats = `<span class="fd-stat"><b>${data.projects.length}</b> registered</span>${bare ? `<span class="fd-stat fd-stat-warn"><b>${bare}</b> without a gate</span>` : ''}${served && setup?.candidates.length ? `<span class="fd-stat"><b>${setup.candidates.length}</b> not registered</span>` : ''}`;
-    $('projects').innerHTML = `<header class="fd-page-head"><div><h1>Projects</h1><p class="fd-desc">Each project supplies its own verification commands. Configuration stays on this machine.</p></div><div class="fd-stats">${stats}</div></header>${checklist()}<div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div><p class="fd-caption fd-page-foot">A project outside the workspace is registered in the terminal: <code>factory add &lt;key&gt; &lt;directory&gt;</code>. Branch conventions and other project rules live in repos.json in your factory data directory.</p>`;
+    $('projects').innerHTML = `<header class="fd-page-head"><div><h1>Projects</h1><p class="fd-desc">Each project supplies its own verification commands. Configuration stays on this machine.</p></div><div class="fd-stats">${stats}${served ? '<button class="fd-btn" type="button" id="export-config" title="Projects, gates and workflow in one file, without paths or task data">Export for the team</button>' : ''}</div></header>${checklist()}<div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div><p class="fd-caption fd-page-foot">A project outside the workspace is registered in the terminal: <code>factory add &lt;key&gt; &lt;directory&gt;</code>. Branch conventions and other project rules live in repos.json in your factory data directory.</p>`;
     renderProjectCards();
   }
   $('projects').addEventListener('input', e => { if (e.target.id === 'project-search') { projectQuery = e.target.value; renderProjectCards(); } });
@@ -185,7 +186,20 @@
     } catch (error) { $('project-error').textContent = error.message; }
     finally { $('save-project').disabled = false; }
   };
+  async function exportConfig() {
+    try {
+      const response = await fetch('/api/export');
+      if (!response.ok) throw new Error((await response.json()).error || 'Export failed.');
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([await response.text()], { type: 'application/json' }));
+      link.download = 'factory.config.json';
+      link.click();
+      URL.revokeObjectURL(link.href);
+      notice('Saved factory.config.json. A teammate applies it with: factory setup --workspace <directory> --from factory.config.json');
+    } catch (error) { notice(error.message); }
+  }
   $('projects').onclick = e => {
+    if (e.target.id === 'export-config') exportConfig();
     const edit = e.target.closest('[data-edit]'), remove = e.target.closest('[data-remove]'), register = e.target.closest('[data-register]');
     if (edit) openProject('edit', data.projects.find(p => p.key === edit.dataset.edit));
     if (register) openProject('add', setup.candidates[Number(register.dataset.register)]);
@@ -315,6 +329,7 @@
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()} · usage may lag up to 60 s`;
     render();
     if (view === 'github') { if (gh) loadGithub(); else renderGithub(); }
+    if (view === 'workflow' && !workflow.busy()) workflow.open();
   };
   function refresh() {
     const script = document.createElement('script'); script.src = `board-data.js?t=${Date.now()}`;
@@ -322,6 +337,7 @@
     script.onerror = () => { script.remove(); $('connection').textContent = 'Disconnected · showing last loaded data'; };
     document.body.appendChild(script);
   }
+  const workflow = mountWorkflow({ $, escape, post, served, notice, projects: () => data.projects });
   renderGithub();
   if (served) { setInterval(refresh, 10000); loadSetup(); }
 })();
