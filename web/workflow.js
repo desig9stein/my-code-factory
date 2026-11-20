@@ -53,10 +53,58 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     return `<li class="fd-use" data-ref="${escape(entry.ref)}" data-kind="${escape(entry.kind)}"><div class="fd-use-head"><span class="fd-chip">${escape(name)}</span><span class="fd-badge">${escape(entry.kind)}</span>${entry.ref.includes('/') ? `<code title="The agent reads this file and follows it">${escape(entry.ref)}</code>` : ''}<button type="button" class="fd-btn fd-ghost" data-drop-use aria-label="Remove ${escape(name)}">Remove</button></div>${known?.description ? `<p class="fd-caption">${escape(known.description)}</p>` : ''}<div class="fd-use-types"><span class="fd-caption">Only for</span>${typeChips('use', entry.types || [])}<span class="fd-caption">none selected = every type</span></div></li>`;
   }
 
+  // Everything that can be added at a step: the repository's agents and skills, then the user's own.
+  function choices() {
+    const a = info.assets, own = (items, kind, group) => items.map(i => ({ ref: i.name, kind, name: i.name, description: i.description || '', group }));
+    return [...(a ? a.agents.map(i => ({ ref: i.ref, kind: 'agent', name: i.name, description: i.description || '', group: 'Agents in this repository' })) : []),
+      ...(a ? a.skills.map(i => ({ ref: i.ref, kind: 'skill', name: i.name, description: i.description || '', group: 'Skills in this repository' })) : []),
+      ...own(info.user.agents, 'agent', 'Your agents'), ...own(info.user.skills, 'skill', 'Your skills')];
+  }
+
   function picker() {
-    const group = (title, items) => items.length ? `<optgroup label="${escape(title)}">${items.map(([value, text]) => `<option value="${escape(value)}">${escape(text)}</option>`).join('')}</optgroup>` : '';
-    const a = info.assets;
-    return `<div class="fd-pick"><select id="wf-pick" aria-label="Add a skill or agent"><option value="">Add a skill or agent…</option>${a ? group('Agents in this repository', a.agents.map(i => [`agent|${i.ref}`, i.name])) + group('Skills in this repository', a.skills.map(i => [`skill|${i.ref}`, i.name])) : ''}${group('Your agents', info.user.agents.map(a => [`agent|${a.name}`, a.name]))}${group('Your skills', info.user.skills.map(a => [`skill|${a.name}`, a.name]))}<option value="other">Other: type a name or a path</option></select><span id="wf-other" hidden><input id="wf-other-ref" aria-label="Skill or agent name, or a path in the project" placeholder="code-review or .github/agents/implementer.md"><select id="wf-other-kind" aria-label="Kind"><option value="skill">Skill</option><option value="agent">Agent</option></select><button type="button" class="fd-btn" id="wf-other-add">Add</button></span></div>`;
+    const total = choices().length;
+    return `<div class="fd-combo"><label for="wf-combo-input">Add a skill or agent</label><div class="fd-combo-box"><input id="wf-combo-input" type="text" role="combobox" aria-expanded="false" aria-controls="wf-combo-list" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Search ${total} skills and agents by name or by what they do"><ul id="wf-combo-list" role="listbox" aria-label="Skills and agents" hidden></ul></div><p class="fd-caption">Type to search, then pick one. To use something that is not listed, type its name or a file path in the project and choose "Use as a skill" or "Use as an agent".</p></div>`;
+  }
+
+  const MAX_OPTIONS = 40;
+  // Fills the list for the typed text and opens it. Words may match the name or the description.
+  function showOptions() {
+    const input = $('wf-combo-input'), list = $('wf-combo-list');
+    if (!input) return;
+    const query = input.value.trim(), words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const used = [...$('wf-use').children].map(row => row.dataset.ref);
+    const matches = choices().filter(c => !used.includes(c.ref) && words.every(w => `${c.name} ${c.description}`.toLowerCase().includes(w)));
+    // A match in the name ranks above a match in the description only.
+    const rank = c => (words.length && words.every(w => c.name.toLowerCase().includes(w)) ? 0 : 1);
+    const shown = matches.map((c, n) => [c, n]).sort((x, y) => rank(x[0]) - rank(y[0]) || x[1] - y[1]).slice(0, MAX_OPTIONS).map(([c]) => c);
+    let html = '', group = '', n = 0;
+    for (const c of shown) {
+      if (!words.length && c.group !== group) { group = c.group; html += `<li role="presentation" class="fd-combo-group">${escape(group)}</li>`; }
+      html += `<li role="option" id="wf-opt-${n++}" aria-selected="false" data-ref="${escape(c.ref)}" data-kind="${c.kind}"><span class="fd-combo-name"><span class="fd-chip">${escape(c.name)}</span><span class="fd-badge">${c.kind}</span>${words.length ? `<span class="fd-combo-from">${escape(c.group)}</span>` : ''}</span>${c.description ? `<span class="fd-combo-desc">${escape(c.description)}</span>` : ''}</li>`;
+    }
+    if (matches.length > shown.length) html += `<li role="presentation" class="fd-combo-group">${matches.length - shown.length} more. Keep typing to narrow the list.</li>`;
+    if (query && !choices().some(c => c.name === query || c.ref === query)) {
+      for (const kind of ['skill', 'agent']) html += `<li role="option" id="wf-opt-${n++}" aria-selected="false" data-ref="${escape(query)}" data-kind="${kind}"><span class="fd-combo-name">Use <span class="fd-chip">${escape(query)}</span> as ${kind === 'agent' ? 'an agent' : 'a skill'}</span><span class="fd-combo-desc">${query.includes('/') ? 'A file in the project. The agent reads it and works by it.' : 'A name the agent can call. It is not in the lists above, so check the spelling.'}</span></li>`;
+    }
+    if (!n) html = '<li role="presentation" class="fd-combo-group">Everything available is already used at this step.</li>';
+    list.innerHTML = html; list.hidden = false; list.scrollTop = 0;
+    input.setAttribute('aria-expanded', 'true'); input.removeAttribute('aria-activedescendant');
+    if (words.length && n) activate(list.querySelector('[role=option]'));
+  }
+  function hideOptions() {
+    if (!$('wf-combo-list')) return;
+    $('wf-combo-list').hidden = true;
+    $('wf-combo-input').setAttribute('aria-expanded', 'false'); $('wf-combo-input').removeAttribute('aria-activedescendant');
+  }
+  function activate(option) {
+    for (const other of $('wf-combo-list').querySelectorAll('[aria-selected=true]')) other.setAttribute('aria-selected', 'false');
+    if (!option) return;
+    option.setAttribute('aria-selected', 'true'); option.scrollIntoView({ block: 'nearest' });
+    $('wf-combo-input').setAttribute('aria-activedescendant', option.id);
+  }
+  function choose(option) {
+    addUse(option.dataset.ref, option.dataset.kind);
+    $('wf-combo-input').value = ''; hideOptions(); $('wf-combo-input').focus();
   }
 
   function strip() {
@@ -99,7 +147,7 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
       + (has('rerunGates') ? `<label class="fd-check"><input type="checkbox" name="rerunGates" ${value.rerunGates ? 'checked' : ''}><span>The verifier runs every check again itself</span></label>` : '');
     return `<form id="wf-form" class="fd-panel fd-editor"><header class="fd-editor-head"><div><h2>${escape(shape.title)}</h2><p class="fd-caption">${escape(shape.about || 'A step you added.')}</p></div><span class="fd-actions"><span class="fd-node-actor fd-actor-${shape.actor.toLowerCase()}">${shape.actor} acts</span>${shape.removable && pipeline === 'stages' ? '<button type="button" class="fd-btn fd-ghost" id="wf-remove-step">Remove this step</button>' : ''}</span></header>`
       + section(1, 'Instructions', 'What the agent is told when a task reaches this step.', ['instructions'], `<textarea name="instructions" rows="7" aria-label="Instructions for the agent">${escape(value.instructions)}</textarea><p class="fd-caption fd-ph-title">Click to insert a value the factory fills in for each task:</p><ul class="fd-ph">${PLACEHOLDERS.map(([token, title]) => `<li><button type="button" class="fd-chip-btn" data-insert="${token}">${token}</button><span>${escape(title)}</span></li>`).join('')}</ul>`)
-      + section(2, 'Skills and agents', 'Optional. The agent is told to use these at this step.', ['use'], `<ul id="wf-use" class="fd-use-list">${value.use.map(useRow).join('')}</ul><p class="fd-caption" id="wf-use-empty" ${value.use.length ? 'hidden' : ''}>None. The agent works from the instructions alone.</p>${picker()}`)
+      + section(2, 'Skills and agents', 'Optional. The agent is told to use these at this step.', ['use'], `<ul id="wf-use" class="fd-use-list">${value.use.map(useRow).join('')}</ul><p class="fd-empty-note" id="wf-use-empty" ${value.use.length ? 'hidden' : ''}>No skill or agent is assigned to this step yet. The agent gets only the instructions from section 1. Add one below if this step should always use a particular skill or hand the work to a particular agent.</p>${picker()}`)
       + section(3, 'Check before moving on', '', checkFields, checks)
       + section(4, 'Model', 'Optional. Which model should do this step.', ['model'], model)
       + `${settings}<p id="wf-error" role="alert"></p></form>`;
@@ -252,7 +300,6 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
       $('wf-form').remove(); reshape(); return;
     }
     if (e.target.closest('[data-drop-use]')) { e.target.closest('.fd-use').remove(); edited(); }
-    if (e.target.id === 'wf-other-add') { addUse($('wf-other-ref').value.trim(), $('wf-other-kind').value); $('wf-other-ref').value = ''; }
     if (e.target.id === 'wf-save') save();
     if (e.target.id === 'wf-discard') { draft = structuredClone(info.override); render(); }
     if (e.target.id === 'wf-accept-all' && !confirm(`Accept all ${info.proposals.length} suggestions for ${scope}?\n\n${info.proposals.map(p => `• ${p.title}`).join('\n')}`)) return;
@@ -266,7 +313,14 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     }
     if (e.target.dataset.dismiss) suggest('/api/workflow/dismiss', [e.target.dataset.dismiss], `${scope}: suggestion dismissed.`);
   });
-  el.addEventListener('input', e => { if (e.target.closest('#wf-form, .fd-general') && !e.target.closest('.fd-pick')) edited(); });
+  el.addEventListener('input', e => {
+    if (e.target.id === 'wf-combo-input') return showOptions();
+    if (e.target.closest('#wf-form, .fd-general')) edited();
+  });
+  el.addEventListener('focusin', e => { if (e.target.id === 'wf-combo-input') showOptions(); });
+  el.addEventListener('focusout', e => { if (e.target.id === 'wf-combo-input') setTimeout(() => { if (document.activeElement?.id !== 'wf-combo-input') hideOptions(); }, 120); });
+  // Keeps focus in the field while an option is clicked.
+  el.addEventListener('mousedown', e => { const option = e.target.closest('#wf-combo-list [role=option]'); if (option) { e.preventDefault(); choose(option); } });
   el.addEventListener('change', e => {
     if (e.target.id === 'wf-scope') {
       if (changes().length && !confirm('Discard the unsaved workflow changes?')) { e.target.value = scope; return; }
@@ -276,15 +330,7 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     if (e.target.name === 'modelPick') { $('wf-model-other').hidden = e.target.value !== '__other'; if (e.target.value === '__other') $('wf-form').elements.model.focus(); }
     if (e.target.name === 'checkKind') for (const block of el.querySelectorAll('[data-check]')) block.hidden = block.dataset.check !== e.target.value;
     if (e.target.name === 'stepAfter') { collect(); reshape(); }
-    if (e.target.id === 'wf-pick') {
-      const value = e.target.value;
-      $('wf-other').hidden = value !== 'other';
-      if (value === 'other') { $('wf-other-ref').focus(); return; }
-      if (value) { const [kind, ...ref] = value.split('|'); addUse(ref.join('|'), kind); }
-      e.target.value = '';
-    }
   });
-  el.addEventListener('toggle', e => { if (e.target.id === 'wf-suggestions') showSuggestions = e.target.open; }, true);
   el.addEventListener('submit', e => {
     e.preventDefault();
     if (e.target.id !== 'wf-new-step') return save();
@@ -296,7 +342,19 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     draft.customStages = [...custom(), { id, title, about: form.elements.about.value.trim(), after: form.elements.after.value, check: { kind: 'none' } }];
     adding = false; stage = id; reshape();
   });
-  el.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'wf-other-ref') { e.preventDefault(); $('wf-other-add').click(); } });
+  el.addEventListener('keydown', e => {
+    if (e.target.id !== 'wf-combo-input') return;
+    const list = $('wf-combo-list'), options = [...list.querySelectorAll('[role=option]')], current = options.findIndex(o => o.getAttribute('aria-selected') === 'true');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (list.hidden) return showOptions();
+      if (options.length) activate(options[(current + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]);
+    } else if (e.key === 'Enter') {
+      // Enter picks the highlighted option and never submits the form from this field.
+      e.preventDefault();
+      if (!list.hidden && options[current]) choose(options[current]);
+    } else if (e.key === 'Escape' && !list.hidden) { e.preventDefault(); hideOptions(); }
+  });
 
   return {
     open() { if (!info && !loading) load(); else if (!changes().length) render(); },

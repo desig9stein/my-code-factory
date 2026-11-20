@@ -432,7 +432,9 @@ test('the user skill list includes plugin skills with their descriptions', () =>
   const dir = path.join(tmp, 'claude');
   write(path.join(dir, 'skills', 'mine', 'SKILL.md'), skill('mine', 'My own skill.'));
   write(path.join(dir, 'plugins', 'synced', 'abc', 'design', 'skills', 'ux-copy', 'SKILL.md'), skill('ux-copy', 'Writes UX copy.'));
+  write(path.join(dir, 'plugins', 'synced', 'abc', 'design~g2', 'skills', 'ux-copy', 'SKILL.md'), skill('ux-copy', 'Writes UX copy.'));
   const { skills } = userAssets();
   assert.deepEqual(skills.find((s) => s.name === 'mine'), { name: 'mine', description: 'My own skill.' });
   assert.deepEqual(skills.find((s) => s.name === 'design:ux-copy'), { name: 'design:ux-copy', description: 'Writes UX copy.' });
+  assert.equal(skills.filter((s) => s.name.endsWith(':ux-copy')).length, 1);
 });
