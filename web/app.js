@@ -156,9 +156,16 @@
   function renderProjects() {
     const bare = data.projects.filter(p => !p.gates.length).length;
     const stats = `<span class="fd-stat"><b>${data.projects.length}</b> registered</span>${bare ? `<span class="fd-stat fd-stat-warn"><b>${bare}</b> without a gate</span>` : ''}${served && setup?.candidates.length ? `<span class="fd-stat"><b>${setup.candidates.length}</b> not registered</span>` : ''}`;
-    $('projects').innerHTML = `<header class="fd-page-head"><div><h1>Projects</h1><p class="fd-desc">Each project supplies its own verification commands. Configuration stays on this machine.</p></div><div class="fd-stats">${stats}${served ? '<button class="fd-btn" type="button" id="export-config" title="Projects, gates and workflow in one file, without paths or task data">Export for the team</button>' : ''}</div></header>${checklist()}<div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div><p class="fd-caption fd-page-foot">A project outside the workspace is registered in the terminal: <code>factory add &lt;key&gt; &lt;directory&gt;</code>. Branch conventions and other project rules live in repos.json in your factory data directory.</p>`;
+    $('projects').innerHTML = `<header class="fd-page-head"><div><h1>Projects</h1><p class="fd-desc">Each project supplies its own verification commands. Configuration stays on this machine.</p></div><div class="fd-stats">${stats}${served ? '<button class="fd-btn" type="button" id="export-config" title="Projects, gates and workflow in one file, without paths or task data">Export for the team</button>' : ''}</div></header>${checklist()}<div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div>${served ? `<h2 class="fd-section">Add a project by its folder</h2><p class="fd-caption">For a repository that is not inside the workspace${data.workspace ? ` (${escape(data.workspace)})` : ''}, or one the list above did not find. It needs to be cloned on this machine and have a GitHub origin.</p><form id="locate-form" class="fd-locate"><label><span class="sr-only">Folder of the repository</span><input name="path" required placeholder="~/code/my-app" autocomplete="off" spellcheck="false"></label><button class="fd-btn" type="submit">Find it</button></form><p id="locate-error" class="fd-failed" role="alert"></p>` : ''}<p class="fd-caption fd-page-foot">Branch conventions and other project rules live in repos.json in your factory data directory.</p>`;
     renderProjectCards();
   }
+  $('projects').addEventListener('submit', async e => {
+    if (e.target.id !== 'locate-form') return;
+    e.preventDefault();
+    $('locate-error').textContent = '';
+    try { openProject('add', await post('/api/project/locate', { path: e.target.elements.path.value })); }
+    catch (error) { $('locate-error').textContent = error.message; }
+  });
   $('projects').addEventListener('input', e => { if (e.target.id === 'project-search') { projectQuery = e.target.value; renderProjectCards(); } });
   const dayOf = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   async function loadReport(day = reportDay || dayOf(new Date())) {
@@ -385,6 +392,7 @@
   };
   window.__factoryData = next => {
     $('connection').textContent = served ? 'Connected · local server' : 'Static snapshot';
+    if (next.workspace) $('workspace-note').textContent = `WORKSPACE ${next.workspace}`;
     if (next.stamp === data.stamp) return;
     // Keep drafts and open explanations stable while the user interacts.
     if (data.stamp && (document.querySelector('dialog[open], #detail details[open]:not(.fd-setup)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;

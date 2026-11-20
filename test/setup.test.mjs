@@ -209,19 +209,40 @@ test('the server updates a project and reports a rejected value', async () => {
   assert.match((await bad.json()).error, /origin\/nope does not exist/);
 });
 
-test('the server registers a workspace folder and refuses one outside the workspace', async () => {
+test('the server registers a workspace folder, and refuses a folder that is not a repository root', async () => {
   const delta = repo('delta', { 'package.json': pkg({ test: 'true' }) });
   const setup = await (await call('/api/setup')).json();
   assert.deepEqual(setup.candidates.map((c) => c.key), ['delta']);
   assert.equal(setup.hooksInstalled, false);
   const outside = await call('/api/project/add', { key: 'out', dir: tmp, baseBranch: 'main', install: '', gates: [] });
   assert.equal(outside.status, 400);
-  assert.match((await outside.json()).error, /only folders inside the workspace/);
+  assert.match((await outside.json()).error, /is not a Git repository\. Clone the project first/);
   const added = await call('/api/project/add', { key: 'delta', dir: delta, baseBranch: 'main', install: '', gates: [{ name: 'test', cmd: 'npm test' }] });
   assert.equal(added.status, 200, await added.clone().text());
   assert.deepEqual(registry().repos.delta, { dir: 'delta', remote: 'acme/delta', baseBranch: 'main', install: '', gates: [{ name: 'test', cmd: 'npm test' }] });
   assert.equal((await call('/api/project/remove', { key: 'delta' })).status, 200);
   assert.equal(registry().repos.delta, undefined);
+});
+
+test('a repository outside the workspace is found by its folder and registered with its full path', async () => {
+  const dir = path.join(tmp, 'elsewhere', 'omega');
+  const remote = path.join(tmp, 'remotes', 'omega.git');
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  sh(tmp, `git init -q --bare -b main "${remote}"`);
+  write(path.join(dir, 'package.json'), pkg({ lint: 'true' }));
+  sh(dir, `git init -q -b main && git add -A && git commit -q -m "chore(repo): seed" && git remote add origin "${remote}" && git push -q origin main && git remote set-head origin main && git remote set-url origin git@github.com:acme/omega.git`);
+  const locate = (typed, headers) => call('/api/project/locate', { path: typed }, headers);
+  assert.equal((await locate(dir, {})).status, 403);
+  const found = await (await locate(dir)).json();
+  assert.deepEqual([found.key, found.remote, found.baseBranch, found.outside, found.gates[0].cmd], ['omega', 'acme/omega', 'main', true, 'npm run lint']);
+  assert.match((await (await locate(path.join(dir, 'src'))).json()).error, /is a folder inside a repository\. Enter the repository root: /);
+  assert.match((await (await locate(path.join(tmp, 'nowhere'))).json()).error, /is not a folder on this machine/);
+  assert.match((await (await locate('')).json()).error, /Enter the folder of a Git repository/);
+  assert.match((await (await locate(path.join(WS, 'alpha'))).json()).error, /is already registered as "alpha"/);
+  assert.equal((await call('/api/project/add', { key: found.key, dir: found.dir, baseBranch: found.baseBranch, install: '', gates: found.gates })).status, 200);
+  assert.equal(registry().repos.omega.dir, fs.realpathSync(dir));
+  assert.match((await (await fetch(`${base}/board-data.js`)).text()), /"workspace":"/);
+  assert.equal((await call('/api/project/remove', { key: 'omega' })).status, 200);
 });
 
 test('the issues query defaults to issues assigned to you in every registered remote', async () => {

@@ -218,3 +218,5 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark .fd-report{margin:12px 0 0;border-radius:8px;font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:pre-wrap;max-height:520px;overflow:auto}
 #factory-dark #report-day{width:auto;padding:6px 10px}#factory-dark #report .fd-wf-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:0}#factory-dark #report-error:empty{display:none}#factory-dark #report-error{font-size:14px;margin:10px 0 0}
 @container (max-width:900px){#factory-dark #report .fd-wf-grid{grid-template-columns:minmax(0,1fr)}}
+#factory-dark .fd-locate{display:flex;gap:8px;align-items:center;max-width:640px;margin-top:12px}#factory-dark .fd-locate label{flex:1;margin:0}#factory-dark #locate-error:empty{display:none}#factory-dark #locate-error{font-size:14px;margin:10px 0 0}
+#factory-dark .fd-top-note{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:46vw}
