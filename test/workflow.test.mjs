@@ -420,6 +420,19 @@ test('the ready stage is shown as "human review" and keeps its fixed rule', () =
   assert.match(formatBrief(stageBrief(at('ready', 'feature'), getRepo('app'))), /stage ready \(human review\)/);
 });
 
+test('every step an agent works in has a default model, and factory-only steps have none', () => {
+  const w = defaultWorkflow();
+  const of = (pipeline) => Object.fromEntries(Object.entries(w[pipeline]).map(([stage, value]) => [stage, value.model]));
+  assert.deepEqual(of('stages'), { intake: '', triage: 'opus', reproduce: 'sonnet', plan: 'fable', implement: 'opus', gates: 'sonnet', verify: 'fable', ready: 'sonnet', approved: 'haiku', 'pr-opened': '' });
+  assert.deepEqual(of('review'), { intake: '', checks: 'sonnet', draft: 'opus', ready: 'sonnet', approved: 'haiku', posted: '' });
+  const known = modelChoices().models.map((m) => m.id);
+  for (const model of [...Object.values(of('stages')), ...Object.values(of('review'))]) assert.ok(model === '' || known.includes(model), model);
+  const brief = formatBrief(stageBrief(at('plan', 'feature'), getRepo('app')));
+  assert.match(brief, /Model for this stage: fable\n {2}Do this step in a subagent that runs on fable/);
+  saveWorkflow('app', { stages: { plan: { model: '' } } });
+  assert.doesNotMatch(formatBrief(stageBrief(at('plan', 'feature'), getRepo('app'))), /Model for this stage/);
+});
+
 test('the model list names the Claude Code model families', () => {
   const choices = modelChoices();
   assert.equal(choices.provider, 'claude');

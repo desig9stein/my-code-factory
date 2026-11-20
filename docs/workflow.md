@@ -61,7 +61,26 @@ The `ready` stage is shown as "human review" on the board and in the brief. Its 
 
 ### Models
 
-The model of a step is picked from the models of the detected coding harness. For Claude Code these are the family aliases `fable`, `opus`, `sonnet` and `haiku`, which always point at the newest model of the family; a full model id can be typed instead. The list is built in, not fetched. The model is a line in the brief; the agent applies it when it delegates the step.
+The model of a step is picked from the models of the detected coding harness. For Claude Code these are the family aliases `fable`, `opus`, `sonnet` and `haiku`, which always point at the newest model of the family; a full model id can be typed instead. The list is built in, not fetched. The model is a line in the brief. A running session cannot change its own model, so the brief tells the agent to do the step in a subagent on that model, or to do it itself when it already runs on it.
+
+Default models:
+
+| Step | Model | Why |
+|------|-------|-----|
+| `triage` | `opus` | A wrong "clear" verdict wastes the whole task. |
+| `reproduce` | `sonnet` | Writing one failing command is narrow work. |
+| `plan` | `fable` | Every later step follows the plan. |
+| `implement` | `opus` | Writing the change. |
+| `gates` | `sonnet` | Running checks and fixing what they report. |
+| `verify` | `fable` | The last automated check before you; a different and stronger model than the one that wrote the code. |
+| `ready` (human review) | `sonnet` | Summarizing the task for you. |
+| `approved` | `haiku` | Pushing and opening the pull request from a prepared text. |
+| review `checks` | `sonnet` | Running checks and reading their output. |
+| review `draft` | `opus` | Writing the code review. |
+| review `ready` | `sonnet` | Summarizing the draft for you. |
+| review `approved` | `haiku` | Posting the approved text. |
+
+`intake`, `pr-opened` and `posted` have no model: the factory acts there, not an agent. A step you add has no model until you pick one. Clear the model of a step to run it on the session's model.
 
 Fixed, whatever the configuration says: the exit rules of `intake`, `triage`, `implement`, `ready`, `approved` and the final stage, the evidence chain check, the clean-tree rule, the PR body and commit checks, and approval by the user bound to the commit and draft. Built-in stages cannot be reordered. Saving rejects an unknown stage, a field the stage does not have, and a type that does not exist, and refuses to switch the verifier off for a type that still requires the regression proof.
 
