@@ -648,3 +648,48 @@ test('the board knows when a linked session last worked, and which column a task
   assert.deepEqual(['triage', 'plan', 'implement', 'gates', 'verify', 'ready', 'approved'].map((s) => phase(s)), ['start', 'start', 'build', 'check', 'check', 'review', 'ship']);
   assert.deepEqual(['checks', 'draft', 'ready'].map((s) => phase(s, { kind: 'review' })), ['check', 'build', 'review']);
 });
+
+test('a session that only names a task from elsewhere does not count as an agent working on it', () => {
+  at('implement', 'feature');
+  const encoded = APP.replace(/[^a-zA-Z0-9]/g, '-');
+  const outside = path.join(tmp, 'projects', '-somewhere-else', 'a.jsonl');
+  const inside = path.join(tmp, 'projects', encoded, 'b.jsonl');
+  write(outside, '{}\n');
+  fs.writeFileSync(path.join(DIR, 'sessions.json'), '[]');
+  linkSession(ID, outside);
+  assert.equal(lastActivity(ID, APP), null);
+  assert.ok(lastActivity(ID));
+  write(inside, '{}\n');
+  linkSession(ID, inside);
+  assert.ok(Date.now() - Date.parse(lastActivity(ID, APP)) < 60_000);
+});
+
+test('activity inside the worktree is told apart from a call that only names the task', async () => {
+  const { recordActivity, activitySummary } = await import('../lib/activity.mjs');
+  const state = at('implement', 'feature');
+  fs.rmSync(path.join(DIR, 'activity.jsonl'), { force: true });
+  recordActivity([state], { tool_name: 'Bash', tool_input: { command: `factory status ${ID}` }, cwd: tmp });
+  assert.equal(activitySummary(state).lastInside, null);
+  assert.equal(activitySummary(state).last.label, 'Bash');
+  recordActivity([state], { tool_name: 'Edit', tool_input: { file_path: 'a.txt' }, cwd: APP });
+  assert.equal(activitySummary(state).lastInside.label, 'Edit');
+});
+
+test('the board records a pull request the user opened by hand, only at the open-the-PR step', async () => {
+  const server = await startServer(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];
+    const post = (headers, body) => fetch(`${base}/api/pr`, { method: 'POST', headers, body: JSON.stringify(body) });
+    at('implement', 'feature');
+    assert.equal((await post({}, { id: ID, url: 'https://github.com/acme/app/pull/9' })).status, 403);
+    assert.match((await (await post({ 'x-factory-token': token }, { id: ID, url: 'https://github.com/acme/app/pull/9' })).json()).error, /is at "implement", not "approved"/);
+    const head = sh(APP, 'git rev-parse HEAD');
+    at('approved', 'feature', { gatesSha: head, approvedSha: head });
+    assert.match((await (await post({ 'x-factory-token': token }, { id: ID, url: 'https://example.com/pull/9' })).json()).error, /Expected a PR URL like https:\/\/github\.com\/acme\/app\/pull\/123/);
+    assert.equal((await post({ 'x-factory-token': token }, { id: ID, url: ' https://github.com/acme/app/pull/9 ' })).status, 200);
+    assert.deepEqual([loadState(ID).stage, loadState(ID).prUrl], ['pr-opened', 'https://github.com/acme/app/pull/9']);
+  } finally {
+    server.close();
+  }
+});

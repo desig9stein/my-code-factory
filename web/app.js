@@ -123,7 +123,7 @@
   const callText = (c) => c.kind === 'mcp' ? `MCP ${c.label}${c.detail ? ` · ${c.detail}` : ''}` : c.kind === 'skill' ? `skill ${c.label}` : c.kind === 'agent' ? `${c.label} agent` : c.detail ? `${c.label}: ${c.detail}` : c.label;
   // The newest sign of an agent on a task: a tool call a hook reported, or a write to a linked session.
   const ACTIVE_MS = 120000;
-  const lastSeen = (i) => Math.max(Date.parse(i.activity?.last?.at || '') || 0, Date.parse(i.lastActivity || '') || 0);
+  const lastSeen = (i) => Math.max(Date.parse(i.activity?.lastInside?.at || '') || 0, Date.parse(i.lastActivity || '') || 0);
   const isActive = (i) => !i.blocked && Date.now() - lastSeen(i) < ACTIVE_MS;
   // The kind is written out, so the chip colour is never the only signal.
   const actChip = (item) => `<span class="fd-achip fd-achip-${escape(item.kind)}">${escape(item.kind === 'mcp' ? `MCP ${item.label}` : item.kind === 'skill' ? `skill ${item.label}` : item.kind === 'agent' ? `${item.label} agent` : item.label)} ${number(item.count)}</span>`;
@@ -131,7 +131,7 @@
     const seen = lastSeen(i), a = i.activity;
     if (!seen) return '<span class="fd-idle"></span><span class="fd-muted">No agent has worked on this yet</span>';
     const since = agoShort(new Date(seen).toISOString());
-    return isActive(i) ? `<span class="fd-pulse"></span><span>Agent working${a?.last ? ` · ${escape(callText(a.last))}` : ''} · ${since} ago</span>` : `<span class="fd-idle"></span><span>Last agent activity ${since} ago</span>`;
+    return isActive(i) ? `<span class="fd-pulse"></span><span>Agent working${a?.lastInside ? ` · ${escape(callText(a.lastInside))}` : ''} · ${since} ago</span>` : `<span class="fd-idle"></span><span>Last agent activity ${since} ago</span>`;
   };
   const liveLine = (i) => `<div class="fd-live" data-live="${escape(i.id)}">${liveInner(i)}</div>`;
   const currentStage = (i) => i.activity.byStage.find(s => s.stage === i.stage);
@@ -197,10 +197,16 @@
     // A session counts as working while its transcript changed in the last few minutes, or right after you opened one here.
     const minutes = lastSeen(i) ? Math.max(0, Math.round((Date.now() - lastSeen(i)) / 60000)) : null;
     const opened = Date.now() - (launched[i.id] || 0) < 3 * 60000;
+    // The start buttons stay in reach: a session can die without the board knowing.
     let agent;
-    if (isActive(i)) agent = `<p class="fd-now-live"><span class="fd-dot"></span>An agent session is working on this task. Last activity ${minutes < 1 ? 'under a minute' : `${minutes} min`} ago.</p><details class="fd-launch-more"><summary>Start another session anyway</summary>${launch(i, false)}</details>`;
-    else if (opened) agent = `<p class="fd-now-live"><span class="fd-dot"></span>You opened a session for this task a moment ago. Send the message there; this page updates when the agent starts working.</p><details class="fd-launch-more"><summary>It did not open? Try again</summary>${launch(i, false)}</details>`;
+    if (isActive(i)) agent = `<p class="fd-now-live"><span class="fd-dot"></span>An agent session is working on this task. Last activity ${minutes < 1 ? 'under a minute' : `${minutes} min`} ago.</p><p class="fd-now-label">Open another session only if that one is gone:</p>${launch(i, false)}`;
+    else if (opened) agent = `<p class="fd-now-live"><span class="fd-dot"></span>You opened a session for this task a moment ago. Send the message there; this page updates when the agent starts working.</p><p class="fd-now-label">It did not open? Try again:</p>${launch(i, false)}`;
     else agent = `<p class="fd-now-label">${minutes === null ? 'No agent session has worked on this task yet. Start one:' : `No agent is working on this task right now. The last session was active ${minutes < 90 ? `${minutes} min` : `${Math.round(minutes / 60)} h`} ago. Start one to continue:`}</p>${launch(i)}`;
+    // Opening the pull request is the one agent step a person can simply do by hand.
+    if (i.stage === 'approved' && i.kind !== 'review') {
+      const own = served ? `<details class="fd-launch-more"><summary>Or open the pull request yourself</summary><p>Push the branch <code>${escape(i.branch)}</code> from <code>${escape(i.worktree)}</code>, open the pull request with the PR description under Task brief, then paste its address here.</p><form id="pr-form" class="fd-locate"><label><span class="sr-only">Address of the pull request</span><input name="url" type="url" required placeholder="https://github.com/owner/repo/pull/123" autocomplete="off"></label><button class="fd-btn" type="submit">Record the pull request</button></form><p id="pr-error" class="fd-failed" role="alert"></p></details>` : '';
+      return panel('agent', 'You approved this. Next: push and open the pull request', `<p>An agent does this step: it pushes the branch and opens the pull request with the approved description. Nothing has been pushed yet.</p>${agent}${own}`);
+    }
     return panel('agent', `The agent is at: ${name}`, `<p>${escape(i.about || 'The agent works on this step.')}</p>${notes}${missing}${agent}`);
   }
   function renderQueue() {
@@ -684,6 +690,13 @@
       $('action-dialog').showModal();
     }
   };
+  for (const host of ['detail', 'drawer']) $(host).addEventListener('submit', async e => {
+    if (e.target.id !== 'pr-form') return;
+    e.preventDefault();
+    const id = host === 'drawer' ? peek : selected;
+    try { await post('/api/pr', { id, url: e.target.elements.url.value }); notice(`${id}: pull request recorded.`); refresh(); }
+    catch (error) { e.target.parentElement.querySelector('#pr-error').textContent = error.message; }
+  });
   $('cancel-answer').onclick = () => $('answer-dialog').close();
   $('answer-form').onsubmit = async e => {
     e.preventDefault();
