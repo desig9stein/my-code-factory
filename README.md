@@ -37,8 +37,9 @@ The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foregro
 
 ## Included
 
-- Dark work queue, project list, and stage activity.
-- Committed diffs, evidence logs, task briefs, and review drafts.
+- Dark work queue grouped by what needs you, project list, stage activity, and a metrics page.
+- A task overview that says what the stage needs next, with acceptance criteria, checks, change size, and the text an approval covers.
+- Committed diffs by file with added and removed lines marked, evidence runs with the end of each log inline, task briefs, and review drafts.
 - Backend-checked approval bound to the displayed commit/draft, plus archive with dirty-worktree protection. These buttons do not publish or merge.
 - A GitHub issues view: open issues assigned to you across the registered projects, with a saved filter (assigned, created, mentioning, involving, another login, anyone; state; label) and a per-project filter.
 - Project editing on the Projects page: base branch, install command and verification gates, checked before they are saved.
