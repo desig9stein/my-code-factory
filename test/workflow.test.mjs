@@ -559,7 +559,13 @@ test('recommended skills are named with their install command until they are ins
 });
 
 test('installed recommended skills are suggested for their steps and applied to the shared workflow', () => {
-  for (const name of ['diagnosing-bugs', 'tdd', 'code-review']) write(path.join(tmp, 'claude', 'plugins', 'cache', 'mattpocock-skills', 'skills', name, 'SKILL.md'), skill(name, 'x'));
+  // The real layout: a version folder, category folders, and a manifest that lists the skills it exposes.
+  const root = path.join(tmp, 'claude', 'plugins', 'cache', 'claude-plugins-official', 'mattpocock-skills', '1.3.1');
+  for (const name of ['diagnosing-bugs', 'tdd', 'code-review']) write(path.join(root, 'skills', 'engineering', name, 'SKILL.md'), skill(name, 'x'));
+  write(path.join(root, 'skills', 'in-progress', 'research', 'SKILL.md'), skill('research', 'Not exposed.'));
+  write(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'mattpocock-skills', skills: ['./skills/engineering/diagnosing-bugs', './skills/engineering/tdd', './skills/engineering/code-review'] }));
+  write(path.join(tmp, 'claude', 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'mattpocock-skills@claude-plugins-official': [{ installPath: root, version: '1.3.1' }] } }));
+  assert.equal(userAssets().skills.some((s) => s.name === 'mattpocock-skills:research' || s.name.startsWith('1.3.1')), false);
   const { recommended, proposals } = proposeGlobal();
   assert.equal(recommended.installed, true);
   assert.deepEqual(proposals.map((p) => [p.pipeline, p.stage, p.use.ref, p.use.types]), [['stages', 'reproduce', 'mattpocock-skills:diagnosing-bugs', ['bug']], ['stages', 'implement', 'mattpocock-skills:tdd', undefined], ['stages', 'verify', 'mattpocock-skills:code-review', undefined], ['review', 'draft', 'mattpocock-skills:code-review', undefined]]);
