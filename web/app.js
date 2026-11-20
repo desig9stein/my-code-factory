@@ -9,6 +9,10 @@
   const served = Boolean(window.__factoryToken);
   let data = { issues: [], projects: [] }, selected = null, tab = 'usage', view = 'work', scope = 'task', query = '', pending = null;
   let rates = { ...DEFAULT_ASSUMPTIONS }, object = 'bulb';
+  let setup = null, editing = null, gh = null, ghError = '', ghLoading = false, ghRepo = '', ghQuery = '', projectQuery = '';
+  let ghFilter = { who: 'assigned', login: '', state: 'open', label: '' };
+  // Mirrors the WHO modes in lib/github.mjs.
+  const WHO = [['assigned', 'Assigned to me'], ['created', 'Created by me'], ['mentioned', 'Mentioning me'], ['involved', 'Involving me'], ['user', 'Assigned to a GitHub user'], ['anyone', 'Anyone']];
   try {
     const saved = JSON.parse(localStorage.getItem('factory-scenario-v1'));
     if (saved) { rates = validateAssumptions(saved.rates); if (OBJECTS[saved.object]) object = saved.object; }
@@ -17,6 +21,43 @@
   const status = (i) => i.blocked ? 'Blocked' : i.stage === 'ready' ? 'Ready for review' : i.stage.replaceAll('-', ' ');
   const notice = (message) => { $('notice').textContent = message; };
   const externalLink = (url, label) => /^https:\/\/github\.com\//i.test(url || '') ? `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer">${escape(label)}</a>` : escape(label);
+  async function post(pathname, body) {
+    const response = await fetch(pathname, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Factory-Token': window.__factoryToken }, body: JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Action failed.');
+    return result;
+  }
+  function show(next) {
+    view = next;
+    document.querySelectorAll('[data-view]').forEach(b => { b.setAttribute('aria-pressed', b.dataset.view === view); if (b.dataset.view === view) $('view-title').textContent = b.textContent; });
+    ['work', 'github', 'projects', 'activity'].forEach(id => { $(id).hidden = id !== view; });
+    if (view === 'projects') loadSetup();
+    if (view === 'github' && !gh && !ghLoading) loadGithub();
+  }
+  function checklist() {
+    if (!served) return '';
+    if (!setup) return '<p class="fd-caption">Checking setup…</p>';
+    const row = (ok, text, fix) => `<li><span class="${ok ? 'fd-pass' : 'fd-warning'}">${ok ? '✓' : '!'}</span> ${escape(text)}${ok || !fix ? '' : `<br><span class="fd-caption">${escape(fix)}</span>`}</li>`;
+    const bare = data.projects.filter(p => !p.gates.length).map(p => p.key);
+    const rows = [...setup.checks.map(c => [c.ok, c.name, c.fix]),
+      [data.projects.length > 0, `${data.projects.length} project(s) registered`, 'Register one on the Projects page, or run "factory setup" in your terminal.'],
+      [!bare.length, bare.length ? `No verification gate: ${bare.join(', ')}` : 'Every project has a verification gate', 'Open Projects and use Edit to add one.'],
+      [setup.hooksInstalled, 'Claude Code guard hooks', 'Optional. Run "factory hooks --install" in your terminal.']];
+    const open = rows.filter(([ok]) => !ok).length;
+    return `<details class="fd-setup" ${open ? 'open' : ''}><summary>Setup · ${open ? `${open} item(s) to look at` : 'all checks pass'}</summary><ul class="fd-checks">${rows.map(r => row(...r)).join('')}</ul><p class="fd-caption">Workspace <code>${escape(setup.workspace)}</code> · data <code>${escape(setup.root)}</code></p></details>`;
+  }
+  async function loadSetup() {
+    if (!served) return;
+    try {
+      const response = await fetch('/api/setup');
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not read the setup state.');
+      setup = result;
+    } catch (error) { notice(error.message); return; }
+    if (document.querySelector('dialog[open]')) return;
+    renderProjects();
+    if (!task()) renderDetail();
+  }
   const doc = (title, content) => `<section><h3>${escape(title)}</h3>${content ? `<pre>${escape(content)}</pre>` : '<p class="fd-caption">Not recorded yet.</p>'}</section>`;
   function saveAssumptions() {
     try { localStorage.setItem('factory-scenario-v1', JSON.stringify({ rates, object })); }
@@ -31,7 +72,7 @@
   function renderDetail() {
     const i = task();
     if (!i) {
-      $('detail').innerHTML = '<div class="fd-empty"><h1>Your workspace is ready.</h1><p>Register a project, then bring in a GitHub issue or pull request. Its progress, evidence, and usage will appear here.</p><pre>factory add app /path/to/app --verify "npm run verify"\nfactory new app#42</pre><p class="fd-caption">Use Projects to see registered repositories.</p></div>';
+      $('detail').innerHTML = `<div class="fd-empty"><h1>Your workspace is ready.</h1>${data.projects.length ? '<p>No task is in flight. Pick an issue under GitHub issues, or use New task with an issue or pull request number. Its progress, evidence, and usage will appear here.</p>' : '<p>No project is registered yet. This command checks your tools and registers every GitHub repository in your workspace:</p><pre>factory setup</pre><p>You can also register them one by one on the Projects page.</p>'}${checklist()}</div>`;
       return;
     }
     const tabs = [['changes', 'Changes'], ['evidence', 'Evidence'], ['brief', 'Task brief'], ['usage', 'Usage']];
@@ -91,20 +132,137 @@
     $('active-assumptions').textContent = `Assumed Wh per million tokens: input ${rates.input}; cache write ${rates.cacheWrite}; cache read ${rates.cacheRead}; output ${rates.output}. Carbon intensity: ${rates.carbonIntensity} g CO₂e/kWh.`;
     $('method-values').innerHTML = `<h4>Tokens → electricity</h4><p>Sum each token count × its assumed Wh-per-million rate ÷ 1,000,000. The four defaults are demonstration inputs, not published provider measurements.</p>${result ? TOKEN_KINDS.map(key => `<div class="fd-calculation"><span>${labels[key]}</span>${number(u[key])} × ${rates[key]} ÷ 1,000,000 = ${precise(result.contributions[key])} Wh</div>`).join('') + `<div class="fd-calculation">Total = ${precise(result.wh)} Wh</div>` : ''}<h4>Electricity → everyday object</h4><p>Runtime = electricity ÷ constant appliance power. Power is an example, not a measurement of your own device.</p>${result ? `<div class="fd-calculation">${precise(result.wh)} Wh ÷ ${OBJECTS[object].watts} W = ${precise(result.hours)} hours</div>` : ''}<h4>Electricity → carbon</h4><p>Emissions = electricity in kWh × assumed carbon intensity. The default 400 g CO₂e/kWh is not a known provider, region, or electricity contract.</p>${result ? `<div class="fd-calculation">${precise(result.wh)} Wh ÷ 1,000 × ${rates.carbonIntensity} g CO₂e/kWh = ${precise(result.grams)} g CO₂e</div>` : ''}<h4>Carbon → driving equivalent</h4><p>393 g CO₂e/mile ÷ 1.609344 km/mile = ${precise(CAR_GRAMS_PER_KM)} g CO₂e/km.</p>${result ? `<div class="fd-calculation">${precise(result.grams)} g ÷ ${precise(CAR_GRAMS_PER_KM)} g/km × 1,000 = ${precise(result.metres)} metres</div>` : ''}<p>Source: <a href="https://www.epa.gov/energy/greenhouse-gas-equivalencies-calculator-calculations-and-references" target="_blank" rel="noopener noreferrer">EPA greenhouse gas equivalencies</a>, average gasoline passenger vehicle, 2022 fleet data. Checked 19 Nov 2026. This supports the car comparison only, not the AI energy rates.</p><h4>What we know and what we do not</h4><p>Tokens come from linked local Claude Code transcripts. Only model calls naming this task, plus matching subagent transcripts, are counted. Unattributed conversation is omitted. A session means that session’s attributed contribution to this task, not its entire conversation. Other providers are currently unsupported.</p><p>Counts refresh at most once per minute. ${u?.missingFiles ? `${u.missingFiles} transcript file(s) missing or unreadable. ` : ''}Provider electricity, hardware, model calibration, and datacenter location are unknown. Actual consumption may differ substantially. There is no validated error range.</p><h4>Scope and exclusions</h4><p>This is a linear serving-electricity scenario, not a lifecycle footprint. No separate cooling or idle-power correction is added; inclusion depends on the rate you supply. Training, hardware manufacture, local builds, your device, and network energy are excluded. The car comparison excludes vehicle manufacture and fuel production.</p><p class="fd-method-meta">Method scenario-v1. Internal calculations use unrounded values; extra decimals explain arithmetic, not accuracy. Appliance and driving equivalents are rounded for readability.</p>`;
   }
-  function renderProjects() {
-    $('projects').innerHTML = '<h1>Projects</h1><p class="fd-desc">Each project supplies its own verification commands. Configuration stays on this machine.</p>' + data.projects.map(p => `<div class="fd-project"><h3>${escape(p.key)}</h3><p>${externalLink(`https://github.com/${p.remote}`, p.remote)} · base ${escape(p.baseBranch)}</p><p><code>${escape(p.dir)}</code></p>${p.gates.length ? p.gates.map(g => `<p>${escape(g.name)}: <code>${escape(g.cmd)}</code></p>`).join('') : '<p class="fd-warning">No verification gates configured.</p>'}</div>`).join('') + '<h3 style="margin-top:24px">Register another project</h3><pre>factory add app /path/to/app --verify "npm run verify"</pre><p class="fd-caption">Edit repos.json in your factory data directory to change commands, branch conventions, or project rules.</p>';
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  function ago(iso) {
+    const days = (Date.now() - Date.parse(iso)) / 864e5;
+    if (!Number.isFinite(days)) return '';
+    return days < 1 ? 'today' : days < 2 ? 'yesterday' : days < 30 ? `${Math.floor(days)}d ago` : days < 365 ? `${Math.floor(days / 30)}mo ago` : `${Math.floor(days / 365)}y ago`;
   }
+  function projectCard(p, footer, kind = '') {
+    const gates = p.gates.length ? `<ul class="fd-gate-list">${p.gates.map(g => `<li><span class="fd-chip">${escape(g.name)}</span><code title="${escape(g.cmd)}">${escape(g.cmd)}</code></li>`).join('')}</ul>` : '<p><span class="fd-badge fd-badge-warn">No verification gate</span></p>';
+    return `<article class="fd-card ${kind}"><header><h3>${escape(p.key)}</h3><span class="fd-badge" title="Base branch">${escape(p.baseBranch)}</span></header><div><p class="fd-card-remote">${externalLink(`https://github.com/${p.remote}`, p.remote)}</p>${gates}${p.install ? `<p class="fd-card-install"><span>install</span><code title="${escape(p.install)}">${escape(p.install)}</code></p>` : ''}</div>${footer ? `<footer>${footer}</footer>` : ''}</article>`;
+  }
+  function renderProjectCards() {
+    const match = p => `${p.key} ${p.remote}`.toLowerCase().includes(projectQuery.toLowerCase());
+    const registered = data.projects.filter(match).sort((a, b) => a.key.localeCompare(b.key));
+    const found = served && setup ? setup.candidates.map((c, n) => [c, n]).filter(([c]) => match(c)) : [];
+    const actions = p => served ? `<button class="fd-btn" data-edit="${escape(p.key)}">Edit</button><button class="fd-btn fd-ghost" data-remove="${escape(p.key)}">Remove</button>` : '';
+    $('project-cards').innerHTML = (registered.length ? `<div class="fd-cards">${registered.map(p => projectCard(p, actions(p))).join('')}</div>` : `<p class="fd-blank">${data.projects.length ? 'No project matches this filter.' : 'No project is registered yet.'}</p>`)
+      + (found.length ? `<h2 class="fd-section">Found in your workspace <span>${found.length}</span></h2><p class="fd-caption">GitHub repositories directly inside the workspace that are not registered. Review the suggested commands before you register one.</p><div class="fd-cards">${found.map(([c, n]) => projectCard(c, `<button class="fd-btn fd-primary" data-register="${n}">Register</button>`, 'fd-card-new')).join('')}</div>` : '');
+  }
+  function renderProjects() {
+    const bare = data.projects.filter(p => !p.gates.length).length;
+    const stats = `<span class="fd-stat"><b>${data.projects.length}</b> registered</span>${bare ? `<span class="fd-stat fd-stat-warn"><b>${bare}</b> without a gate</span>` : ''}${served && setup?.candidates.length ? `<span class="fd-stat"><b>${setup.candidates.length}</b> not registered</span>` : ''}`;
+    $('projects').innerHTML = `<header class="fd-page-head"><div><h1>Projects</h1><p class="fd-desc">Each project supplies its own verification commands. Configuration stays on this machine.</p></div><div class="fd-stats">${stats}</div></header>${checklist()}<div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div><p class="fd-caption fd-page-foot">A project outside the workspace is registered in the terminal: <code>factory add &lt;key&gt; &lt;directory&gt;</code>. Branch conventions and other project rules live in repos.json in your factory data directory.</p>`;
+    renderProjectCards();
+  }
+  $('projects').addEventListener('input', e => { if (e.target.id === 'project-search') { projectQuery = e.target.value; renderProjectCards(); } });
+  const gateRow = (g = {}) => `<div class="fd-gate" data-cwd="${escape(g.cwd || '')}"><label>Name<input data-gate="name" required value="${escape(g.name || '')}" placeholder="verify"></label><label>Command<input data-gate="cmd" required value="${escape(g.cmd || '')}" placeholder="npm run verify"></label><button type="button" class="fd-btn" data-drop-gate>Remove</button></div>`;
+  function openProject(mode, p) {
+    editing = { mode, key: p.key, dir: p.dir, baseBranch: p.baseBranch, install: p.install || '' };
+    const form = $('project-form');
+    $('project-title').textContent = mode === 'edit' ? `Edit ${p.key}` : `Register ${p.key}`;
+    $('project-dir').textContent = p.dir;
+    form.elements.key.value = p.key; form.elements.key.readOnly = mode === 'edit';
+    form.elements.baseBranch.value = p.baseBranch; form.elements.install.value = p.install || '';
+    $('project-gates').innerHTML = p.gates.map(gateRow).join('');
+    $('project-error').textContent = '';
+    $('project-dialog').showModal();
+  }
+  $('add-gate').onclick = () => { $('project-gates').insertAdjacentHTML('beforeend', gateRow()); $('project-gates').lastElementChild.querySelector('input').focus(); };
+  $('project-gates').onclick = e => { if (e.target.closest('[data-drop-gate]')) e.target.closest('.fd-gate').remove(); };
+  $('cancel-project').onclick = () => $('project-dialog').close();
+  $('project-form').onsubmit = async e => {
+    e.preventDefault();
+    const form = e.target, base = form.elements.baseBranch.value.trim(), install = form.elements.install.value.trim();
+    const gates = [...$('project-gates').querySelectorAll('.fd-gate')].map(row => ({ name: row.querySelector('[data-gate=name]').value.trim(), cmd: row.querySelector('[data-gate=cmd]').value.trim(), ...(row.dataset.cwd ? { cwd: row.dataset.cwd } : {}) }));
+    $('save-project').disabled = true;
+    try {
+      if (editing.mode === 'edit') await post('/api/project/update', { key: editing.key, gates, ...(base !== editing.baseBranch ? { baseBranch: base } : {}), ...(install !== editing.install ? { install } : {}) });
+      else await post('/api/project/add', { key: form.elements.key.value.trim(), dir: editing.dir, baseBranch: base, install, gates });
+      notice(`${form.elements.key.value.trim()}: ${editing.mode === 'edit' ? 'saved' : 'registered'}.`);
+      $('project-dialog').close(); gh = null; refresh(); loadSetup();
+    } catch (error) { $('project-error').textContent = error.message; }
+    finally { $('save-project').disabled = false; }
+  };
+  $('projects').onclick = e => {
+    const edit = e.target.closest('[data-edit]'), remove = e.target.closest('[data-remove]'), register = e.target.closest('[data-register]');
+    if (edit) openProject('edit', data.projects.find(p => p.key === edit.dataset.edit));
+    if (register) openProject('add', setup.candidates[Number(register.dataset.register)]);
+    if (remove) {
+      const key = remove.dataset.remove;
+      pending = { path: '/api/project/remove', body: { key }, done: `${key}: removed from the registry.` };
+      $('action-title').textContent = 'Remove this project?';
+      $('action-text').textContent = `${key}: this removes the project from the factory registry. The repository folder, its branches and recorded task history are kept. A project with tasks in flight is refused.`;
+      $('action-dialog').showModal();
+    }
+  };
+  async function loadGithub(fresh) {
+    if (!served) return renderGithub();
+    ghLoading = true;
+    if ($('gh-results')) renderGithubList(); else renderGithub();
+    try {
+      const response = await fetch(`/api/github/issues${fresh ? '?fresh=1' : ''}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not load GitHub issues.');
+      const changed = JSON.stringify(result.filter) !== JSON.stringify(ghFilter);
+      gh = result; ghFilter = result.filter; ghError = '';
+      if (changed) $('github').innerHTML = '';
+    } catch (error) { ghError = error.message; }
+    ghLoading = false;
+    if ($('gh-results')) renderGithubList(); else renderGithub();
+  }
+  function renderGithubList() {
+    const all = gh?.issues || [];
+    if (ghRepo && !all.some(i => i.project === ghRepo)) ghRepo = '';
+    $('gh-loaded').textContent = ghLoading ? 'Loading…' : gh && !ghError ? `Loaded ${new Date(gh.loadedAt).toLocaleTimeString()}` : '';
+    if (ghError) { $('gh-results').innerHTML = `<p class="fd-blank fd-failed" role="alert">${escape(ghError)}</p>`; return; }
+    if (!gh) { $('gh-results').innerHTML = '<p class="fd-blank">Loading issues from GitHub…</p>'; return; }
+    if (!data.projects.length) { $('gh-results').innerHTML = '<p class="fd-blank">No project is registered yet. Register one on the Projects page first.</p>'; return; }
+    const counts = new Map();
+    for (const i of all) counts.set(i.project, (counts.get(i.project) || 0) + 1);
+    const chip = (key, label, count) => `<button type="button" class="fd-chip-btn" data-gh-repo="${escape(key)}" aria-pressed="${ghRepo === key}">${escape(label)} <b>${count}</b></button>`;
+    const chips = `<div class="fd-chips" role="group" aria-label="Filter by project">${chip('', 'All projects', all.length)}${[...counts].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([key, count]) => chip(key, key, count)).join('')}</div>`;
+    const shown = all.filter(i => (!ghRepo || i.project === ghRepo) && `${i.title} #${i.number} ${i.labels.join(' ')}`.toLowerCase().includes(ghQuery.toLowerCase()));
+    const row = i => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(i.url, i.title)}</p><p class="fd-issue-meta"><span class="fd-chip">${escape(i.project)}</span><span>#${escape(i.number)}</span><span title="${escape(i.updatedAt)}">updated ${escape(ago(i.updatedAt))}</span>${i.assignees.length ? `<span>${escape(i.assignees.join(', '))}</span>` : ''}${i.labels.map(l => `<span class="fd-label">${escape(l.replace(/:[a-z0-9_+-]+:\s*/g, '') || l)}</span>`).join('')}</p></div><div class="fd-issue-action">${i.task ? `<span class="fd-badge fd-badge-ok">${escape(i.task.stage)}</span><button class="fd-btn" data-open-task="${escape(i.task.id)}">Open task</button>` : `<button class="fd-btn" data-start-project="${escape(i.project)}" data-start-number="${escape(i.number)}">Start task</button>`}</div></li>`;
+    $('gh-results').innerHTML = chips + (shown.length ? `<ul class="fd-issues">${shown.map(row).join('')}</ul>` : `<p class="fd-blank">${all.length ? 'No loaded issue matches.' : 'No issues match this filter.'}</p>`)
+      + `<p class="fd-caption fd-page-foot">${plural(shown.length, 'issue')} shown of ${all.length}.${all.length >= gh.limit ? ` GitHub returned the ${gh.limit} most recently updated; narrow the filter to see the rest.` : ''}</p>`;
+  }
+  function renderGithub() {
+    const head = '<div><h1>GitHub issues</h1><p class="fd-desc">Issues in your registered projects, read through the GitHub CLI on this machine.</p></div>';
+    if (!served) { $('github').innerHTML = `<header class="fd-page-head">${head}</header><p class="fd-blank">This view needs the local server. Run <code>factory board</code>.</p>`; return; }
+    const f = ghFilter;
+    const option = (value, label, current) => `<option value="${escape(value)}" ${value === current ? 'selected' : ''}>${escape(label)}</option>`;
+    const state = (value, label) => `<label><input type="radio" name="state" value="${value}" ${f.state === value ? 'checked' : ''}><span>${label}</span></label>`;
+    $('github').innerHTML = `<header class="fd-page-head">${head}<div class="fd-actions"><span class="fd-caption" id="gh-loaded" role="status"></span><button class="fd-btn" type="button" id="gh-refresh">Refresh</button></div></header><form id="gh-filter" class="fd-panel fd-filter"><label>Show issues<select name="who">${WHO.map(([value, label]) => option(value, label, f.who)).join('')}</select></label><label id="gh-login" ${f.who === 'user' ? '' : 'hidden'}>GitHub login<input name="login" value="${escape(f.login)}" placeholder="octocat"></label><fieldset class="fd-seg"><legend>State</legend><div>${state('open', 'Open')}${state('closed', 'Closed')}</div></fieldset><label>Label<input name="label" value="${escape(f.label)}" placeholder="Any label"></label><button class="fd-btn fd-primary" type="submit">Apply</button><p class="fd-caption">Saved in your factory data directory. It applies until you change it.</p></form><div class="fd-bar"><label class="fd-search"><span class="sr-only">Search loaded issues</span><input id="gh-search" type="search" placeholder="Search loaded issues by title, number or label" value="${escape(ghQuery)}"></label></div><div id="gh-results"></div>`;
+    renderGithubList();
+  }
+  $('github').addEventListener('input', e => { if (e.target.id === 'gh-search') { ghQuery = e.target.value; renderGithubList(); } });
+  $('github').addEventListener('change', e => {
+    if (e.target.name === 'who') $('gh-login').hidden = e.target.value !== 'user';
+  });
+  $('github').addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+    try {
+      ghFilter = (await post('/api/github/filter', { who: form.get('who'), login: form.get('login'), state: form.get('state'), label: form.get('label') })).filter;
+      gh = null; ghError = ''; loadGithub();
+    } catch (error) { ghError = error.message; renderGithub(); }
+  });
+  $('github').addEventListener('click', e => {
+    if (e.target.id === 'gh-refresh') loadGithub(true);
+    const chip = e.target.closest('[data-gh-repo]');
+    if (chip) { ghRepo = chip.dataset.ghRepo; renderGithubList(); $('gh-results').querySelector('[aria-pressed=true]')?.focus(); }
+    const open = e.target.closest('[data-open-task]'), start = e.target.closest('[data-start-project]');
+    if (open) { selected = open.dataset.openTask; scope = 'task'; show('work'); renderQueue(); renderDetail(); }
+    if (start) openNew(start.dataset.startProject, start.dataset.startNumber);
+  });
   function renderActivity() {
     const events = data.issues.flatMap(i => i.history.map(h => ({ ...h, id: i.id }))).sort((a, b) => b.at.localeCompare(a.at));
     $('activity').innerHTML = '<h1>Activity</h1><p class="fd-desc">Recorded stage history for tasks currently in flight.</p>' + events.map(h => `<div class="fd-project"><p>${escape(h.id)} · <strong>${escape(h.stage)}</strong></p><p>${escape(h.note)}</p><span class="fd-caption">${escape(h.at)}</span></div>`).join('');
   }
   function render() { renderQueue(); renderDetail(); renderProjects(); renderActivity(); }
-  document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => {
-    view = button.dataset.view;
-    document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', b === button));
-    ['work', 'projects', 'activity'].forEach(id => { $(id).hidden = id !== view; });
-    $('view-title').textContent = button.textContent;
-  });
+  document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => show(button.dataset.view));
   $('search').oninput = e => { query = e.target.value; renderQueue(); };
   $('tasks').onclick = e => { const button = e.target.closest('[data-task]'); if (button) { selected = button.dataset.task; scope = 'task'; renderQueue(); renderDetail(); } };
   $('detail').onclick = e => {
@@ -112,9 +270,10 @@
     if (button) { tab = button.dataset.tab; renderDetail(); }
     const action = e.target.closest('[data-action]');
     if (action) {
-      const i = task(); pending = { action: action.dataset.action, id: i.id, key: i.approvalKey };
-      $('action-title').textContent = pending.action === 'approve' ? 'Approve this version?' : 'Archive this task?';
-      $('action-text').textContent = pending.action === 'approve' ? `${i.id}: approval covers commit ${(i.head || '').slice(0, 12)} and the displayed draft. Read the draft and evidence before confirming. This does not push or merge.` : `${i.id}: this removes the clean worktree and hides the task. The local branch and recorded evidence are kept. Dirty worktrees are refused.`;
+      const i = task(), approving = action.dataset.action === 'approve';
+      pending = { path: `/api/${action.dataset.action}`, body: { id: i.id, key: i.approvalKey }, done: `${i.id}: ${approving ? 'approved' : 'archived'}.` };
+      $('action-title').textContent = approving ? 'Approve this version?' : 'Archive this task?';
+      $('action-text').textContent = approving ? `${i.id}: approval covers commit ${(i.head || '').slice(0, 12)} and the displayed draft. Read the draft and evidence before confirming. This does not push or merge.` : `${i.id}: this removes the clean worktree and hides the task. The local branch and recorded evidence are kept. Dirty worktrees are refused.`;
       $('action-dialog').showModal();
     }
   };
@@ -123,11 +282,9 @@
     const request = { ...pending };
     $('confirm-action').disabled = true;
     try {
-      const response = await fetch(`/api/${request.action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Factory-Token': window.__factoryToken }, body: JSON.stringify(request) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Action failed.');
-      notice(`${request.id}: ${request.action === 'approve' ? 'approved' : 'archived'}.`);
-      $('action-dialog').close(); pending = null; refresh();
+      await post(request.path, request.body);
+      notice(request.done);
+      $('action-dialog').close(); pending = null; gh = null; refresh(); loadSetup();
     } catch (error) { $('action-text').textContent = error.message; }
     finally { $('confirm-action').disabled = false; }
   };
@@ -137,10 +294,12 @@
     $('new-command').textContent = valid ? `factory ${$('new-kind').value} '${project}#${n}'` : 'Choose a project and enter a number.';
     $('copy-command').disabled = !valid;
   }
-  $('new-task').onclick = () => {
-    $('new-project').innerHTML = data.projects.map(p => `<option value="${escape(p.key)}">${escape(p.key)}</option>`).join('');
+  function openNew(project, number) {
+    $('new-project').innerHTML = data.projects.map(p => `<option value="${escape(p.key)}" ${p.key === project ? 'selected' : ''}>${escape(p.key)}</option>`).join('');
+    if (number) { $('new-kind').value = 'new'; $('new-number').value = number; }
     newCommand(); $('new-dialog').showModal();
-  };
+  }
+  $('new-task').onclick = () => openNew();
   ['new-project', 'new-kind', 'new-number'].forEach(id => $(id).oninput = newCommand);
   $('copy-command').onclick = async () => {
     try { await navigator.clipboard.writeText($('new-command').textContent); notice('Task command copied. Run it in your terminal.'); }
@@ -150,11 +309,12 @@
     $('connection').textContent = served ? 'Connected · local server' : 'Static snapshot';
     if (next.stamp === data.stamp) return;
     // Keep drafts and open explanations stable while the user interacts.
-    if (data.stamp && (document.querySelector('dialog[open], #detail details[open]') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;
+    if (data.stamp && (document.querySelector('dialog[open], #detail details[open]:not(.fd-setup)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;
     data = next;
     if (!data.issues.some(i => i.id === selected)) selected = data.issues[0]?.id || null;
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()} · usage may lag up to 60 s`;
     render();
+    if (view === 'github') { if (gh) loadGithub(); else renderGithub(); }
   };
   function refresh() {
     const script = document.createElement('script'); script.src = `board-data.js?t=${Date.now()}`;
@@ -162,5 +322,6 @@
     script.onerror = () => { script.remove(); $('connection').textContent = 'Disconnected · showing last loaded data'; };
     document.body.appendChild(script);
   }
-  if (served) setInterval(refresh, 10000);
+  renderGithub();
+  if (served) { setInterval(refresh, 10000); loadSetup(); }
 })();

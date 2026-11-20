@@ -18,3 +18,4 @@ board-data.js
 .board.pid
 WORK_LOG.md
 .board-*.pid
+.idea/

@@ -1,6 +1,46 @@
 # Project configuration
 
-`factory init --workspace <directory>` creates a private registry in the data directory. `factory add <key> <directory> --verify "npm run verify"` registers a local Git repository. Origin must resolve to GitHub, or be supplied with `--remote owner/repo`.
+## Setup
+
+`factory setup --workspace <directory>` checks the required tools, creates a private registry in the data directory, and registers every GitHub repository directly inside the workspace. It asks once before registering; `--yes` skips the question, and without a terminal and without `--yes` it only prints what it found. Repositories that are already registered are skipped, so it is safe to run again.
+
+Each repository gets these defaults:
+
+| Field | Default |
+|-------|---------|
+| key | The folder name. |
+| base branch | `origin/HEAD`, or the current branch when `origin/HEAD` is unset. |
+| install | `yarn install --frozen-lockfile` for a `yarn.lock`, `pnpm install --frozen-lockfile` for a `pnpm-lock.yaml`, `npm ci` for a `package-lock.json`, otherwise empty. |
+| gate `verify` | `npm run verify` when the script exists; otherwise the existing ones of `lint` and `test` joined with `&&`; otherwise `npm run build`; otherwise no gate. |
+
+The defaults are read from files, not run. A placeholder `test` script, a suite that needs a browser, or a repository whose `package.json` is in a subfolder needs a gate you write yourself.
+
+`factory init --workspace <directory>` only creates the registry. `factory add <key> <directory>` registers one repository, inside or outside the workspace, with the same defaults; `--verify`, `--install`, `--base` and `--remote owner/repo` override them. Origin must resolve to GitHub, or be supplied with `--remote`.
+
+## Editing in the board
+
+The Projects page of `factory board` edits a registered project: base branch, install command and gates. It also registers the repositories setup would find, and removes a project.
+
+- The base branch must exist as `origin/<branch>` in the local repository. Run `git fetch origin <branch>` first when it does not. A base branch other than `origin/HEAD` is stored with `allowBaseMismatch`, so `factory doctor` does not report it.
+- A gate name uses lowercase letters, digits and hyphens, is unique in the project, and is not `install`, `reproduce` or `regress`.
+- A command is one line of at most 500 characters. Join steps with `&&`, or move them into a package script. A project has at most 10 gates.
+- Changing a gate's command makes its earlier runs `stale` on tasks in flight. Run the gate again with `factory run <id> <gate>`.
+- Removing a project is refused while one of its tasks is in flight. The repository folder and the recorded task history stay.
+- The board registers only folders inside the workspace.
+
+Other fields (`remote`, `dir`, `prBody`, branch conventions) are edited in `repos.json`.
+
+## GitHub issues
+
+The GitHub issues view runs `gh search issues` over the remotes of the registered projects, so it needs the GitHub CLI and a login (`gh auth login`). The filter is saved in `config.json` under `issues`:
+
+```json
+{ "issues": { "who": "assigned", "login": "", "state": "open", "label": "" } }
+```
+
+`who` is `assigned` (the default), `created`, `mentioned`, `involved`, `user` (assigned to `login`) or `anyone`. `state` is `open` or `closed`. The project select filters the loaded list in the browser. Results are cached for 60 seconds; Refresh asks GitHub again. GitHub returns at most the 200 most recently updated issues per search. Pull requests are not listed.
+
+## `repos.json`
 
 Example `repos.json`:
 
@@ -30,4 +70,4 @@ Paths resolve relative to the configured workspace; absolute project paths also 
 
 Commit scope checks and maximum commit count are configurable. The original personal AI-attribution restriction is opt-in via `forbidAiAttribution`, not a universal factory policy. Optional metadata such as `notes`, `playbooks`, `consumers`, `prTemplate`, and `changelog` can guide your coding harness; the CLI does not automatically execute Markdown guidance.
 
-Run `factory doctor` to check configuration drift against the local repositories. Configure at least one meaningful verification gate before using a project for implementation work.
+Run `factory doctor` to check configuration drift against the local repositories. The board shows projects without a gate in its setup checklist. Configure at least one meaningful verification gate before using a project for implementation work.

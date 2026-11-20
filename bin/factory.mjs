@@ -6,8 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { hookSettings } from '../lib/hooks.mjs';
-import { initialize, addProject } from '../lib/setup.mjs';
+import { hookSettings, installHooks } from '../lib/hooks.mjs';
+import { addProject, discoverProjects, initialize, preflight } from '../lib/setup.mjs';
 import { writeBoard } from '../lib/board.mjs';
 import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } from '../lib/checks.mjs';
 import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyChain } from '../lib/evidence.mjs';
@@ -22,6 +22,7 @@ import { exists, head, isDirty, listStates, loadState, move, saveState, sync } f
 
 const HELP = `Software factory
 
+  setup [--workspace <directory>] [--yes]             Check the tools, initialize, and register every repo in the workspace
   init --workspace <directory>                        Initialize local configuration (never overwrites it)
   add <key> <directory> [--verify <command>]           Register a project; --remote, --base, --install optional
 
@@ -44,7 +45,7 @@ const HELP = `Software factory
   pr <id> <url>                                        Record the opened PR
   archive <id> [--delete-branch]                       Hide a finished issue and remove its worktree
   board [--no-open] [--static] [--stop]                Open the kanban board (local server on 127.0.0.1)
-  hooks                                                Print Claude Code hook settings for this installation
+  hooks [--install] [--settings <file>]                Print the Claude Code hook settings, or merge them into the settings file
   doctor                                               Compare the registry with the repos
 `;
 
@@ -121,10 +122,41 @@ const commands = {
     const result = initialize(args.workspace || process.cwd());
     console.log(`Configuration: ${result.root}\nWorkspace: ${result.workspace}\nNext: factory add <key> <project-directory> --verify "npm run verify"`);
   },
+  async setup(args) {
+    const checks = preflight();
+    for (const c of checks) console.log(`${c.ok ? 'ok  ' : c.required ? 'FAIL' : 'warn'}  ${c.name}${c.ok ? ` (${c.detail})` : `: ${c.fix}`}`);
+    if (checks.some((c) => !c.ok && c.required)) throw new Error('A required tool is missing. Fix the FAIL lines above, then run setup again.');
+    const result = initialize(typeof args.workspace === 'string' ? args.workspace : process.cwd());
+    console.log(`\nConfiguration: ${result.root}\nWorkspace: ${result.workspace}`);
+    const found = discoverProjects();
+    if (!found.length) console.log('\nNo unregistered GitHub repositories found directly inside the workspace.');
+    else {
+      console.log(`\n${found.length} repositories found:\n`);
+      table(['KEY', 'REMOTE', 'BASE', 'INSTALL', 'GATE'], found.map((p) => [p.key, p.remote, p.baseBranch, p.install || '-', p.gates[0]?.cmd || 'none']));
+      let yes = args.yes === true;
+      if (!yes && process.stdin.isTTY) {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        yes = !/^n/i.test((await rl.question(`\nRegister these ${found.length} projects? [Y/n] `)).trim());
+        rl.close();
+      } else if (!yes) console.log('\nNothing registered: there is no terminal to ask in. Run "factory setup --yes" to register them all.');
+      if (yes) {
+        for (const p of found) {
+          try {
+            addProject(p.key, p.dir, { base: p.baseBranch, install: p.install, gates: p.gates });
+            console.log(`Registered ${p.key}${p.gates.length ? '' : ' without a gate; add one on the Projects page'}.`);
+          } catch (err) {
+            console.log(`Skipped ${p.key}: ${err.message}`);
+          }
+        }
+      }
+    }
+    console.log('\nNext:\n  factory board             Open the board; change base branches and gates on its Projects page\n  factory hooks --install   Add the Claude Code guard hooks to your settings');
+  },
   add(args) {
     const result = addProject(args._[0], args._[1], args);
     console.log(`Registered ${args._[0]} (${result.remote}, base ${result.baseBranch}).`);
-    if (!result.gates.length) console.log('No verification command configured. Add gates in repos.json before using this project.');
+    if (result.gates.length) console.log(`Gate "${result.gates[0].name}": ${result.gates[0].cmd}`);
+    else console.log('No verification command configured. Add a gate on the Projects page of the board before using this project.');
   },
   new(args) {
     const { repo: key, issue: number } = parseRef(args._[0]);
@@ -472,8 +504,10 @@ const commands = {
     process.exitCode = 1;
   },
 
-  hooks() {
-    console.log(JSON.stringify(hookSettings(), null, 2));
+  hooks(args) {
+    if (!args.install) return console.log(JSON.stringify(hookSettings(), null, 2));
+    const result = installHooks(typeof args.settings === 'string' ? path.resolve(args.settings) : undefined);
+    console.log(result.changed ? `Hooks merged into ${result.file}.${result.backup ? ` Previous version: ${result.backup}.` : ''} Restart Claude Code sessions to load them.` : `Hooks in ${result.file} are already current.`);
   },
 
   help() {
