@@ -1,5 +1,5 @@
 // Draws the Workflow page: pipeline, stage editor, live agent preview and repository suggestions.
-function mountWorkflow({ $, escape, post, served, notice, projects }) {
+function mountWorkflow({ $, escape, post, served, notice, ask, projects }) {
   const el = $('workflow');
   const HEAD = '<div><h1>Workflow</h1><p class="fd-desc">Decide what the agent does at each step of a task. Pick a step, write its instructions, and choose the skills and agents it should use.</p></div>';
   const PLACEHOLDERS = [['{id}', 'the task id, for example app-42'], ['{dir}', 'the folder that holds the task documents: triage.md, plan.md, pr-body.md'], ['{worktree}', 'the folder where the agent edits the code for this task'], ['{types}', 'the task types, for example bug|feature|docs|chore'], ['{headings}', 'the sections plan.md must have']];
@@ -187,7 +187,7 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     el.innerHTML = `<header class="fd-page-head">${HEAD}<label class="fd-scope">Editing the workflow for<select id="wf-scope">${option('global', 'All projects')}${projects().map(p => option(p.key, p.key)).join('')}</select></label></header>`
       + `<p class="fd-scope-note">${scope === 'global' ? 'This is the shared workflow. Every project follows it unless it has its own value.' : `You are changing <strong>${escape(scope)}</strong> only. Anything you leave alone follows the shared workflow of all projects.`}</p>`
       + suggestions()
-      + `<div class="fd-pipe-head"><div class="fd-switch" role="group" aria-label="Kind of task">${PIPES.map(([key, text]) => `<button type="button" data-pipe="${key}" aria-pressed="${key === pipeline}">${text}</button>`).join('')}</div><p class="fd-legend"><span class="fd-node-actor fd-actor-agent">Agent</span><span class="fd-node-actor fd-actor-verifier">Verifier</span><span class="fd-node-actor fd-actor-you">You</span><span class="fd-node-actor fd-actor-factory">Factory</span><span class="fd-caption">who acts at each step</span></p></div><div id="wf-strip">${strip()}</div>${adding ? newStep() : ''}`
+      + `<div class="fd-pipe-head"><div class="fd-switch" role="group" aria-label="Kind of task">${PIPES.map(([key, text]) => `<button type="button" data-pipe="${key}" aria-pressed="${key === pipeline}">${text}</button>`).join('')}</div><p class="fd-legend"><span class="fd-node-actor fd-actor-agent">Agent</span><span class="fd-node-actor fd-actor-verifier">Verifier</span><span class="fd-node-actor fd-actor-you">You</span><span class="fd-node-actor fd-actor-factory">Factory</span><span class="fd-caption">who acts at each step</span><span class="fd-node-dot"></span><span class="fd-caption">changed here</span></p></div><div id="wf-strip">${strip()}</div>${adding ? newStep() : ''}`
       + `<div class="fd-wf-grid">${editor()}<aside class="fd-panel fd-preview"><div class="fd-editor-head"><h3>What the agent sees</h3><label class="fd-inline">for a<select id="wf-preview-type"><option value="">task of any type</option>${types().map(t => `<option ${t === previewType ? 'selected' : ''}>${escape(t)}</option>`).join('')}</select></label></div><pre id="wf-preview" aria-live="polite">Loading…</pre><p class="fd-caption">Updates as you type. This is what <code>factory next</code> prints for a task at this step.</p></aside></div>`
       + basics() + inventory()
       + '<div class="fd-savebar" id="wf-savebar" hidden><span id="wf-changed"></span><span class="fd-actions"><button type="button" class="fd-btn fd-ghost" id="wf-discard">Discard</button><button type="button" class="fd-btn fd-primary" id="wf-save">Save changes</button></span></div>';
@@ -312,8 +312,7 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     if (e.target.closest('[data-drop-use]')) { e.target.closest('.fd-use').remove(); edited(); }
     if (e.target.id === 'wf-save') save();
     if (e.target.id === 'wf-discard') { draft = structuredClone(info.override); render(); }
-    if (e.target.id === 'wf-accept-all' && !confirm(`Accept all ${info.proposals.length} suggestions for ${scope}?\n\n${info.proposals.map(p => `• ${p.title}`).join('\n')}`)) return;
-    if (e.target.id === 'wf-accept-all') suggest('/api/workflow/accept', info.proposals.map(p => p.id), `${scope}: ${info.proposals.length} suggestion(s) applied.`);
+    if (e.target.id === 'wf-accept-all') { ask(`Accept all ${info.proposals.length} suggestions for ${scope}?`, info.proposals.map(p => p.title).join('. ') + '.', () => suggest('/api/workflow/accept', info.proposals.map(p => p.id), `${scope}: ${info.proposals.length} suggestion(s) applied.`)); return; }
     if (e.target.dataset.showStep) { collect(); [pipeline, stage] = e.target.dataset.showStep.split(':'); render(); $('wf-form').scrollIntoView({ block: 'start', behavior: 'smooth' }); return; }
     if (e.target.dataset.accept) {
       const accepted = info.proposals.find(p => p.id === e.target.dataset.accept);
@@ -333,8 +332,9 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
   el.addEventListener('mousedown', e => { const option = e.target.closest('#wf-combo-list [role=option]'); if (option) { e.preventDefault(); choose(option); } });
   el.addEventListener('change', e => {
     if (e.target.id === 'wf-scope') {
-      if (changes().length && !confirm('Discard the unsaved workflow changes?')) { e.target.value = scope; return; }
-      scope = e.target.value; info = null; load();
+      const next = e.target.value;
+      if (changes().length) { e.target.value = scope; ask('Discard the unsaved workflow changes?', `You changed ${changes().join(', ')} for ${scopeName()} and did not save. Switching drops those changes.`, () => { scope = next; info = null; load(); }); return; }
+      scope = next; info = null; load();
     }
     if (e.target.id === 'wf-preview-type') { previewType = e.target.value; preview(); }
     if (e.target.name === 'modelPick') { $('wf-model-other').hidden = e.target.value !== '__other'; if (e.target.value === '__other') $('wf-form').elements.model.focus(); }

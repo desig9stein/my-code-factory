@@ -415,12 +415,14 @@ test('an added step is rejected when it reuses a factory name, sits after the hu
   assert.throws(() => saveWorkflow('global', { stages: { 'design-review': { instructions: 'x' } } }), /"design-review" is not a stage of the issue workflow/);
 });
 
-test('the ready stage is shown as "human review" and keeps its fixed rule', () => {
+test('steps carry one display name each, and the ready stage is "your review" with its fixed rule', () => {
   const shape = workflowShape(resolveWorkflow('app'));
   const ready = shape.stages.find((s) => s.stage === 'ready');
-  assert.deepEqual([ready.title, ready.actor, ready.removable, ready.configurable], ['human review', 'You', false, false]);
-  assert.equal(shape.review.find((s) => s.stage === 'ready').title, 'human review');
-  assert.match(formatBrief(stageBrief(at('ready', 'feature'), getRepo('app'))), /stage ready \(human review\)/);
+  assert.deepEqual([ready.title, ready.actor, ready.removable, ready.configurable], ['your review', 'You', false, false]);
+  assert.deepEqual(shape.stages.filter((s) => s.title !== s.stage).map((s) => [s.stage, s.title]), [['gates', 'checks'], ['ready', 'your review'], ['approved', 'open the PR'], ['pr-opened', 'PR opened']]);
+  assert.equal(shape.review.find((s) => s.stage === 'approved').title, 'post the review');
+  assert.equal(shape.review.find((s) => s.stage === 'ready').title, 'your review');
+  assert.match(formatBrief(stageBrief(at('ready', 'feature'), getRepo('app'))), /stage ready \(your review\)/);
 });
 
 test('every step an agent works in has a default model, and factory-only steps have none', () => {
