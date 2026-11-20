@@ -1,16 +1,30 @@
-// Draws the Workflow page: pipeline, stage editor, agent preview and repository proposals.
+// Draws the Workflow page: pipeline, stage editor, live agent preview and repository suggestions.
 function mountWorkflow({ $, escape, post, served, notice, projects }) {
   const el = $('workflow');
-  const HEAD = '<div><h1>Workflow</h1><p class="fd-desc">What the agent is told at each stage, which skills and agents it uses, and which checks apply to which type of task. Approval by you, evidence integrity and the clean-tree rule are fixed.</p></div>';
-  const LABELS = { skipFor: { reproduce: 'Skip this stage for', plan: 'Skip this stage for', verify: 'No verifier needed for' }, requireRegression: 'Regression proof required for' };
-  let scope = 'global', pipeline = 'stages', stage = 'triage', info = null, draft = {}, previewType = '', loading = false;
+  const HEAD = '<div><h1>Workflow</h1><p class="fd-desc">Decide what the agent does at each step of a task. Pick a step, write its instructions, and choose the skills and agents it should use.</p></div>';
+  const PLACEHOLDERS = [['{id}', 'The task id, such as app-42'], ['{dir}', "The task's document folder (triage.md, plan.md, pr-body.md)"], ['{worktree}', "The task's worktree folder"], ['{types}', 'The task types'], ['{headings}', 'The required plan sections']];
+  const PIPES = [['stages', 'Issue to pull request'], ['review', 'Pull request review']];
+  let scope = 'global', pipeline = 'stages', stage = 'triage', info = null, draft = {}, previewType = '', loading = false, timer = null, showSuggestions = false;
 
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  const dirty = () => info && !same(draft, info.override);
+  const scopeName = () => (scope === 'global' ? 'all projects' : scope);
   const inherited = (p = pipeline, s = stage) => info.inherited[p][s];
   const effective = (p = pipeline, s = stage) => ({ ...inherited(p, s), ...draft[p]?.[s] });
   const types = () => draft.types || info.inherited.types;
   const lines = (text) => [...new Set(text.split('\n').map(line => line.trim()).filter(Boolean))];
+  const shapeOf = (p = pipeline, s = stage) => info.shape[p].find(item => item.stage === s);
+  const label = (p, s) => (p === 'review' ? `review · ${s}` : s);
+  const assets = () => (info.assets ? [...info.assets.agents, ...info.assets.skills] : []);
+
+  // Lists what differs from the saved workflow, as readable names.
+  function changes() {
+    if (!info) return [];
+    const out = [];
+    for (const [p] of PIPES) for (const { stage: s } of info.shape[p]) if (!same(draft[p]?.[s], info.override[p]?.[s])) out.push(label(p, s));
+    if (!same(draft.readFirst, info.override.readFirst)) out.push('files to read first');
+    if (!same(draft.types, info.override.types)) out.push('task types');
+    return out;
+  }
 
   async function load() {
     if (!served) return render();
@@ -26,71 +40,115 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
   }
 
   const typeChips = (field, selected) => `<div class="fd-chips fd-typechips" data-types="${field}">${types().map(type => `<button type="button" class="fd-chip-btn" data-type="${escape(type)}" aria-pressed="${selected.includes(type)}">${escape(type)}</button>`).join('')}</div>`;
-  const useRow = (entry = { ref: '', kind: 'skill', types: [] }) => `<div class="fd-use"><label>Skill, agent, or file in the project<input data-use="ref" list="wf-refs" value="${escape(entry.ref)}" placeholder="code-review or .github/agents/implementer.md"></label><label>Kind<select data-use="kind"><option value="skill" ${entry.kind === 'skill' ? 'selected' : ''}>Skill</option><option value="agent" ${entry.kind === 'agent' ? 'selected' : ''}>Agent</option></select></label><button type="button" class="fd-btn fd-ghost" data-drop-use>Remove</button><div class="fd-use-types"><span class="fd-caption">Only for these types (none selected means every type)</span>${typeChips('use', entry.types || [])}</div></div>`;
 
-  function nodes(name) {
-    return `<ol class="fd-pipe">${info.shape[name].map(({ stage: s, configurable }) => {
-      const value = effective(name, s), set = Boolean(draft[name]?.[s]);
-      const meta = [value.use.length ? `${value.use.length} in use` : '', value.skipFor?.length ? `${s === 'verify' ? 'no verifier' : 'skips'}: ${value.skipFor.join(', ')}` : '', configurable ? '' : 'fixed rule'].filter(Boolean);
-      return `<li><button type="button" class="fd-node" data-node="${name}:${escape(s)}" aria-pressed="${name === pipeline && s === stage}"><span class="fd-node-name">${escape(s)}${set ? '<span class="fd-node-dot" title="Changed in this scope"></span>' : ''}</span><span class="fd-node-meta">${escape(meta.join(' · ') || 'default')}</span></button></li>`;
+  function useRow(entry) {
+    const known = assets().find(a => a.ref === entry.ref);
+    const name = known?.name || entry.ref;
+    return `<li class="fd-use" data-ref="${escape(entry.ref)}" data-kind="${escape(entry.kind)}"><div class="fd-use-head"><span class="fd-chip">${escape(name)}</span><span class="fd-badge">${escape(entry.kind)}</span>${entry.ref.includes('/') ? `<code title="The agent reads this file and follows it">${escape(entry.ref)}</code>` : ''}<button type="button" class="fd-btn fd-ghost" data-drop-use aria-label="Remove ${escape(name)}">Remove</button></div>${known?.description ? `<p class="fd-caption">${escape(known.description)}</p>` : ''}<div class="fd-use-types"><span class="fd-caption">Only for</span>${typeChips('use', entry.types || [])}<span class="fd-caption">none selected = every type</span></div></li>`;
+  }
+
+  function picker() {
+    const group = (title, items) => items.length ? `<optgroup label="${escape(title)}">${items.map(([value, text]) => `<option value="${escape(value)}">${escape(text)}</option>`).join('')}</optgroup>` : '';
+    const a = info.assets;
+    return `<div class="fd-pick"><select id="wf-pick" aria-label="Add a skill or agent"><option value="">Add a skill or agent…</option>${a ? group('Agents in this repository', a.agents.map(i => [`agent|${i.ref}`, i.name])) + group('Skills in this repository', a.skills.map(i => [`skill|${i.ref}`, i.name])) : ''}${group('Your agents', info.user.agents.map(n => [`agent|${n}`, n]))}${group('Your skills', info.user.skills.map(n => [`skill|${n}`, n]))}<option value="other">Other: type a name or a path</option></select><span id="wf-other" hidden><input id="wf-other-ref" aria-label="Skill or agent name, or a path in the project" placeholder="code-review or .github/agents/implementer.md"><select id="wf-other-kind" aria-label="Kind"><option value="skill">Skill</option><option value="agent">Agent</option></select><button type="button" class="fd-btn" id="wf-other-add">Add</button></span></div>`;
+  }
+
+  function strip() {
+    return `<ol class="fd-pipe">${info.shape[pipeline].map(({ stage: s, actor }, index) => {
+      const value = effective(pipeline, s);
+      const meta = [value.use.length ? `${value.use.length} skill${value.use.length === 1 ? '' : 's'}/agent${value.use.length === 1 ? '' : 's'}` : '', value.skipFor?.length ? `${s === 'verify' ? 'no verifier for' : 'skipped for'} ${value.skipFor.join(', ')}` : ''].filter(Boolean);
+      return `<li><button type="button" class="fd-node" data-node="${escape(s)}" aria-pressed="${s === stage}"><span class="fd-node-top"><span class="fd-node-num">${index + 1}</span><span class="fd-node-actor fd-actor-${actor.toLowerCase()}">${actor}</span>${draft[pipeline]?.[s] ? `<span class="fd-node-dot" title="Customized for ${escape(scopeName())}"></span>` : ''}</span><span class="fd-node-name">${escape(s)}</span>${meta.length ? `<span class="fd-node-meta">${escape(meta.join(' · '))}</span>` : ''}</button></li>`;
     }).join('')}</ol>`;
   }
 
+  // A heading with a "customized" tag and reset for the fields it covers.
+  function section(number, title, hint, fields, body) {
+    return `<section class="fd-sec"><header><span class="fd-sec-num">${number}</span><div><h3>${title}</h3>${hint ? `<p class="fd-caption">${hint}</p>` : ''}</div><span class="fd-custom" data-custom="${fields.join(',')}" hidden><span class="fd-badge fd-badge-warn">customized</span><button type="button" class="fd-link" data-reset="${fields.join(',')}">Use the ${scope === 'global' ? 'default' : 'value from all projects'}</button></span></header>${body}</section>`;
+  }
+
   function editor() {
-    const shape = info.shape[pipeline].find(item => item.stage === stage), value = effective();
+    const shape = shapeOf(), value = effective();
     const has = field => shape.fields.includes(field);
-    const chips = field => `<fieldset class="fd-field"><legend>${field === 'skipFor' ? LABELS.skipFor[stage] : LABELS[field]}</legend>${typeChips(field, value[field] || [])}</fieldset>`;
-    return `<form id="wf-form" class="fd-panel"><header class="fd-editor-head"><h2>${escape(pipeline === 'review' ? `review · ${stage}` : stage)}</h2><span class="fd-badge">${shape.configurable ? 'checks configurable' : 'fixed exit rule'}</span></header><p class="fd-caption fd-rule">Exit rule: ${escape(shape.rule)}</p><label>Instructions for the agent<textarea name="instructions" rows="7">${escape(value.instructions)}</textarea></label><p class="fd-caption">Placeholders: <code>{id}</code> <code>{dir}</code> (the task's document folder) <code>{worktree}</code> <code>{types}</code> <code>{headings}</code></p><fieldset class="fd-field"><legend>Skills and agents to use</legend><div id="wf-use">${value.use.map(useRow).join('')}</div><button type="button" class="fd-btn" id="wf-add-use">+ Add</button></fieldset><label>Model hint<input name="model" value="${escape(value.model)}" placeholder="Leave empty to use the session's model"></label>${has('skipFor') ? chips('skipFor') : ''}${has('headings') ? `<label>Required sections in plan.md, one per line<textarea name="headings" rows="4">${escape((value.headings || []).join('\n'))}</textarea></label>` : ''}${has('requireRegression') ? chips('requireRegression') : ''}${has('rerunGates') ? `<label class="fd-check"><input type="checkbox" name="rerunGates" ${value.rerunGates ? 'checked' : ''}><span>The verifier re-runs every gate</span></label>` : ''}<p id="wf-error" role="alert"></p><div class="fd-actions"><button type="submit" class="fd-btn fd-primary">Save workflow</button><button type="button" class="fd-btn fd-ghost" id="wf-reset">Reset this stage</button><span class="fd-caption" id="wf-dirty"></span></div></form>`;
+    const question = (field, text, hint) => `<div class="fd-q"><p class="fd-q-title">${text}</p>${typeChips(field, value[field] || [])}<p class="fd-caption">${hint}</p></div>`;
+    const checkFields = shape.fields.filter(f => ['skipFor', 'headings', 'requireRegression', 'rerunGates'].includes(f));
+    const checks = `<p class="fd-done"><span>Done when</span> ${escape(shape.rule)}</p>` + (shape.configurable ? '' : '<p class="fd-caption">This check is fixed and cannot be changed here.</p>')
+      + (has('skipFor') && stage !== 'verify' ? question('skipFor', 'Which task types skip this step?', 'A selected type goes straight to the next step.') : '')
+      + (has('headings') ? `<label>Sections plan.md must have, one per line<textarea name="headings" rows="4">${escape((value.headings || []).join('\n'))}</textarea></label>` : '')
+      + (has('requireRegression') ? question('requireRegression', 'Which task types must prove the fix with a test?', 'The test has to fail on the base branch and pass on the change.') : '')
+      + (has('skipFor') && stage === 'verify' ? question('skipFor', 'Which task types need no second agent?', 'The PR description and commit checks still apply to every type.') : '')
+      + (has('rerunGates') ? `<label class="fd-check"><input type="checkbox" name="rerunGates" ${value.rerunGates ? 'checked' : ''}><span>The verifier runs every check again itself</span></label>` : '');
+    return `<form id="wf-form" class="fd-panel fd-editor"><header class="fd-editor-head"><div><h2>${escape(stage)}</h2><p class="fd-caption">${escape(shape.about)}</p></div><span class="fd-node-actor fd-actor-${shape.actor.toLowerCase()}">${shape.actor} acts</span></header>`
+      + section(1, 'Instructions', 'What the agent is told when a task reaches this step.', ['instructions'], `<textarea name="instructions" rows="7" aria-label="Instructions for the agent">${escape(value.instructions)}</textarea><div class="fd-ph"><span class="fd-caption">Insert</span>${PLACEHOLDERS.map(([token, title]) => `<button type="button" class="fd-chip-btn" data-insert="${token}" title="${escape(title)}">${token}</button>`).join('')}</div>`)
+      + section(2, 'Skills and agents', 'Optional. The agent is told to use these at this step.', ['use'], `<ul id="wf-use" class="fd-use-list">${value.use.map(useRow).join('')}</ul><p class="fd-caption" id="wf-use-empty" ${value.use.length ? 'hidden' : ''}>None. The agent works from the instructions alone.</p>${picker()}`)
+      + section(3, 'Check before moving on', '', checkFields, checks)
+      + `<details class="fd-more"><summary>More options</summary><label>Model for this step<input name="model" value="${escape(value.model)}" placeholder="Empty: the model of the running session"></label></details><p id="wf-error" role="alert"></p></form>`;
   }
 
-  function general() {
-    return `<details class="fd-panel fd-general"><summary>For every stage${draft.readFirst || draft.types ? ' · changed in this scope' : ''}</summary><label>Files the agent reads first, one per line, relative to the project<textarea id="wf-read-first" rows="2" placeholder="AGENTS.md">${escape((draft.readFirst || info.inherited.readFirst).join('\n'))}</textarea></label><label>Task types, one per line<textarea id="wf-types" rows="4">${escape(types().join('\n'))}</textarea></label><p class="fd-caption">Triage assigns one of these types. Type-based checks refer to them. Saved with "Save workflow".</p></details>`;
+  function basics() {
+    const showTypes = scope === 'global';
+    return `<details class="fd-panel fd-general" ${draft.readFirst || draft.types ? 'open' : ''}><summary>Settings for every step${draft.readFirst || draft.types ? ' · customized' : ''}</summary><label>Files the agent reads before every step, one per line<textarea id="wf-read-first" rows="2" placeholder="AGENTS.md">${escape((draft.readFirst || info.inherited.readFirst).join('\n'))}</textarea></label>${showTypes ? `<label>Task types, one per line<textarea id="wf-types" rows="4">${escape(types().join('\n'))}</textarea></label><p class="fd-caption">Triage gives every task one of these types. The per-type choices above use them.</p>` : ''}</details>`;
   }
 
-  function found() {
+  function suggestions() {
+    if (scope === 'global' || !info.assets || !info.proposals.length) return '';
+    const reusable = info.assets.agents.length + info.assets.skills.length;
+    return `<details class="fd-callout" id="wf-suggestions" ${showSuggestions ? 'open' : ''}><summary><strong>${escape(scope)} already has ${reusable ? `${reusable} agent${reusable === 1 ? '' : 's'} and skill${reusable === 1 ? '' : 's'}` : 'instruction files'} you can reuse.</strong> ${info.proposals.length} suggestion${info.proposals.length === 1 ? '' : 's'} to review</summary><p class="fd-caption">Each suggestion is a guess from a file name. Accept the ones that fit; nothing changes until you do.</p><ul class="fd-issues">${info.proposals.map(p => `<li class="fd-issue"><div><p class="fd-issue-title">${escape(p.title)}</p><p class="fd-issue-meta"><span>${escape(p.reason)}</span></p>${p.note ? `<p class="fd-issue-meta fd-warning">${escape(p.note)}</p>` : ''}</div><div class="fd-issue-action"><button type="button" class="fd-btn" data-accept="${escape(p.id)}">Accept</button><button type="button" class="fd-btn fd-ghost" data-dismiss="${escape(p.id)}">Dismiss</button></div></li>`).join('')}</ul><div class="fd-actions fd-callout-foot"><button type="button" class="fd-btn" id="wf-accept-all">Accept all ${info.proposals.length}</button></div></details>`;
+  }
+
+  function inventory() {
     if (scope === 'global' || !info.assets) return '';
-    const a = info.assets, count = a.agents.length + a.skills.length + a.products.length + a.instructions.length + (a.prTemplate ? 1 : 0);
-    if (!count) return '<p class="fd-blank">This repository has no agent, skill or instruction files the factory recognizes.</p>';
-    const proposals = info.proposals.length ? `<div class="fd-proposals"><div class="fd-editor-head"><h3>Proposals from this repository <span class="fd-muted">${info.proposals.length}</span></h3><button type="button" class="fd-btn" id="wf-accept-all">Accept all</button></div><ul class="fd-issues">${info.proposals.map(p => `<li class="fd-issue"><div><p class="fd-issue-title">${escape(p.title)}</p><p class="fd-issue-meta"><span>${escape(p.reason)}</span></p>${p.note ? `<p class="fd-issue-meta fd-warning">${escape(p.note)}</p>` : ''}</div><div class="fd-issue-action"><button type="button" class="fd-btn" data-accept="${escape(p.id)}">Accept</button><button type="button" class="fd-btn fd-ghost" data-dismiss="${escape(p.id)}">Dismiss</button></div></li>`).join('')}</ul></div>` : '<p class="fd-caption">No open proposals for this project.</p>';
+    const a = info.assets;
     const group = (title, items) => items.length ? `<h4>${title} <span class="fd-muted">${items.length}</span></h4><ul class="fd-asset-list">${items.map(i => `<li><span class="fd-chip">${escape(i.name)}</span>${i.differs ? '<span class="fd-badge fd-badge-warn">copies differ</span>' : ''}<code>${escape(i.path)}</code>${i.description ? `<span class="fd-asset-desc">${escape(i.description)}</span>` : ''}</li>`).join('')}</ul>` : '';
-    return `<h2 class="fd-section">Found in this repository <span>${count}</span></h2>${proposals}<details class="fd-panel fd-general"><summary>Everything found</summary>${group('Agents', a.agents)}${group('Contributor skills', a.skills)}${group('Product skills, written for library users and not proposed', a.products)}<h4>Instruction files</h4><p class="fd-caption">${escape(a.instructions.join(', ') || 'none')}</p><h4>PR template</h4><p class="fd-caption">${escape(a.prTemplate || 'none')}</p></details>`;
+    return `<details class="fd-panel fd-general"><summary>Everything found in the ${escape(scope)} repository</summary>${group('Agents', a.agents)}${group('Skills for contributors', a.skills)}${group('Skills for library users, not suggested', a.products)}<h4>Instruction files</h4><p class="fd-caption">${escape(a.instructions.join(', ') || 'none')}</p><h4>PR template</h4><p class="fd-caption">${escape(a.prTemplate || 'none')}</p></details>`;
   }
 
   function render() {
     if (!served) { el.innerHTML = `<header class="fd-page-head">${HEAD}</header><p class="fd-blank">This view needs the local server. Run <code>factory board</code>.</p>`; return; }
     if (!info) { el.innerHTML = `<header class="fd-page-head">${HEAD}</header><p class="fd-blank">${loading ? 'Loading the workflow…' : 'The workflow could not be loaded.'}</p>`; return; }
-    if (!info.shape[pipeline].some(item => item.stage === stage)) { pipeline = 'stages'; stage = 'triage'; }
-    const option = (value, label) => `<option value="${escape(value)}" ${value === scope ? 'selected' : ''}>${escape(label)}</option>`;
-    const refs = [...(info.assets ? [...info.assets.agents, ...info.assets.skills].map(a => a.ref) : []), ...info.user.skills, ...info.user.agents];
-    el.innerHTML = `<header class="fd-page-head">${HEAD}<label class="fd-scope">Applies to<select id="wf-scope">${option('global', 'All projects')}${projects().map(p => option(p.key, p.key)).join('')}</select></label></header><p class="fd-caption fd-scope-note">${scope === 'global' ? 'Changes here apply to every project that does not override them.' : `Changes here apply to ${escape(scope)} only. Everything else follows "All projects".`}</p><h2 class="fd-section">Issue to pull request</h2>${nodes('stages')}<h2 class="fd-section">Pull request review</h2>${nodes('review')}<div class="fd-wf-grid">${editor()}<aside class="fd-panel fd-preview"><div class="fd-editor-head"><h3>What the agent sees</h3><label class="fd-inline">Task type<select id="wf-preview-type"><option value="">not set</option>${types().map(t => `<option ${t === previewType ? 'selected' : ''}>${escape(t)}</option>`).join('')}</select></label></div><pre id="wf-preview">Loading…</pre><p class="fd-caption">Printed by <code>factory next &lt;id&gt;</code>. Shows the saved workflow, without unsaved changes.</p></aside></div>${general()}${found()}<datalist id="wf-refs">${[...new Set(refs)].map(r => `<option value="${escape(r)}">`).join('')}</datalist>`;
+    if (!shapeOf()) stage = info.shape[pipeline][1].stage;
+    const option = (value, text) => `<option value="${escape(value)}" ${value === scope ? 'selected' : ''}>${escape(text)}</option>`;
+    el.innerHTML = `<header class="fd-page-head">${HEAD}<label class="fd-scope">Editing the workflow for<select id="wf-scope">${option('global', 'All projects')}${projects().map(p => option(p.key, p.key)).join('')}</select></label></header>`
+      + `<p class="fd-scope-note">${scope === 'global' ? 'This is the shared workflow. Every project follows it unless it has its own value.' : `You are changing <strong>${escape(scope)}</strong> only. Anything you leave alone follows the shared workflow of all projects.`}</p>`
+      + suggestions()
+      + `<div class="fd-pipe-head"><div class="fd-switch" role="group" aria-label="Kind of task">${PIPES.map(([key, text]) => `<button type="button" data-pipe="${key}" aria-pressed="${key === pipeline}">${text}</button>`).join('')}</div><p class="fd-legend"><span class="fd-node-actor fd-actor-agent">Agent</span><span class="fd-node-actor fd-actor-verifier">Verifier</span><span class="fd-node-actor fd-actor-you">You</span><span class="fd-node-actor fd-actor-factory">Factory</span><span class="fd-caption">who acts at each step</span></p></div><div id="wf-strip">${strip()}</div>`
+      + `<div class="fd-wf-grid">${editor()}<aside class="fd-panel fd-preview"><div class="fd-editor-head"><h3>What the agent sees</h3><label class="fd-inline">for a<select id="wf-preview-type"><option value="">task of any type</option>${types().map(t => `<option ${t === previewType ? 'selected' : ''}>${escape(t)}</option>`).join('')}</select></label></div><pre id="wf-preview" aria-live="polite">Loading…</pre><p class="fd-caption">Updates as you type. This is what <code>factory next</code> prints for a task at this step.</p></aside></div>`
+      + basics() + inventory()
+      + '<div class="fd-savebar" id="wf-savebar" hidden><span id="wf-changed"></span><span class="fd-actions"><button type="button" class="fd-btn fd-ghost" id="wf-discard">Discard</button><button type="button" class="fd-btn fd-primary" id="wf-save">Save changes</button></span></div>';
     mark();
     preview();
   }
 
   async function preview() {
-    const target = `${scope}|${pipeline}|${stage}|${previewType}`;
+    const target = `${scope}|${pipeline}|${stage}|${previewType}|${JSON.stringify(draft)}`;
     try {
-      const response = await fetch(`/api/workflow/preview?scope=${encodeURIComponent(scope)}&pipeline=${pipeline}&stage=${encodeURIComponent(stage)}&type=${encodeURIComponent(previewType)}`);
-      const result = await response.json();
-      if (target !== `${scope}|${pipeline}|${stage}|${previewType}` || !$('wf-preview')) return;
-      $('wf-preview').textContent = response.ok ? result.text : result.error;
-    } catch (error) { if ($('wf-preview')) $('wf-preview').textContent = error.message; }
+      const result = await post('/api/workflow/preview', { scope, workflow: draft, pipeline, stage, type: previewType });
+      if (target !== `${scope}|${pipeline}|${stage}|${previewType}|${JSON.stringify(draft)}` || !$('wf-preview')) return;
+      $('wf-preview').textContent = result.text; $('wf-preview').classList.remove('fd-failed');
+    } catch (error) { if ($('wf-preview')) { $('wf-preview').textContent = `This cannot be saved yet:\n\n${error.message}`; $('wf-preview').classList.add('fd-failed'); } }
   }
 
-  const mark = () => { if ($('wf-dirty')) $('wf-dirty').textContent = dirty() ? 'Unsaved changes' : ''; };
+  // Refreshes what depends on the draft without touching the fields being edited.
+  function mark() {
+    const changed = changes();
+    if ($('wf-savebar')) { $('wf-savebar').hidden = !changed.length; $('wf-changed').textContent = `Unsaved changes for ${scopeName()}: ${changed.join(', ')}`; }
+    if ($('wf-strip') && !$('wf-strip').contains(document.activeElement)) $('wf-strip').innerHTML = strip();
+    for (const tag of el.querySelectorAll('[data-custom]')) tag.hidden = !tag.dataset.custom.split(',').some(field => field && draft[pipeline]?.[stage]?.[field] !== undefined);
+    if ($('wf-use-empty')) $('wf-use-empty').hidden = Boolean($('wf-use').children.length);
+  }
+
   const pressed = container => [...container.querySelectorAll('[aria-pressed=true]')].map(button => button.dataset.type);
 
   // Moves the form into the draft; a value equal to the inherited one is not stored.
   function collect() {
     const form = $('wf-form');
     if (!form || !info) return;
-    const shape = info.shape[pipeline].find(item => item.stage === stage), base = inherited(), current = {};
+    const shape = shapeOf(), base = inherited(), current = {};
     current.instructions = form.elements.instructions.value.trim();
     current.model = form.elements.model.value.trim();
     current.use = [...form.querySelectorAll('.fd-use')].map(row => {
       const only = pressed(row.querySelector('[data-types]'));
-      return { ref: row.querySelector('[data-use=ref]').value.trim(), kind: row.querySelector('[data-use=kind]').value, ...(only.length ? { types: only } : {}) };
-    }).filter(entry => entry.ref);
+      return { ref: row.dataset.ref, kind: row.dataset.kind, ...(only.length ? { types: only } : {}) };
+    });
     for (const field of ['skipFor', 'requireRegression']) if (shape.fields.includes(field)) current[field] = pressed(form.querySelector(`[data-types=${field}]`));
     if (shape.fields.includes('headings')) current.headings = lines(form.elements.headings.value);
     if (shape.fields.includes('rerunGates')) current.rerunGates = form.elements.rerunGates.checked;
@@ -98,49 +156,75 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     draft[pipeline] = { ...draft[pipeline] };
     if (Object.keys(changed).length) draft[pipeline][stage] = changed; else delete draft[pipeline][stage];
     if (!Object.keys(draft[pipeline]).length) delete draft[pipeline];
-    const readFirst = lines($('wf-read-first').value), taskTypes = lines($('wf-types').value);
+    const readFirst = lines($('wf-read-first').value);
     if (same(readFirst, info.inherited.readFirst)) delete draft.readFirst; else draft.readFirst = readFirst;
-    if (same(taskTypes, info.inherited.types)) delete draft.types; else draft.types = taskTypes;
+    if ($('wf-types')) { const taskTypes = lines($('wf-types').value); if (same(taskTypes, info.inherited.types)) delete draft.types; else draft.types = taskTypes; }
   }
 
-  async function act(pathname, body, done) {
-    try { await post(pathname, body); notice(done); await load(); }
-    catch (error) { if ($('wf-error')) $('wf-error').textContent = error.message; else notice(error.message); }
+  function edited() {
+    collect(); mark();
+    clearTimeout(timer); timer = setTimeout(preview, 350);
+  }
+
+  function addUse(ref, kind) {
+    if (!ref) return;
+    if ([...$('wf-use').children].some(row => row.dataset.ref === ref)) { notice(`${ref} is already used at this step.`); return; }
+    $('wf-use').insertAdjacentHTML('beforeend', useRow({ ref, kind, types: [] }));
+    edited();
+  }
+
+  async function save() {
+    collect();
+    try { await post('/api/workflow', { scope, workflow: draft }); notice(`Workflow saved for ${scopeName()}.`); await load(); }
+    catch (error) { $('wf-error').textContent = error.message; $('wf-error').scrollIntoView({ block: 'center' }); }
+  }
+
+  async function suggest(pathname, ids, done) {
+    if (changes().length) { notice('Save or discard your unsaved changes first, then accept suggestions.'); return; }
+    try { await post(pathname, { project: scope, ids }); notice(done); await load(); }
+    catch (error) { notice(error.message); }
   }
 
   el.addEventListener('click', e => {
-    const node = e.target.closest('[data-node]'), type = e.target.closest('[data-type]');
-    if (type) { type.setAttribute('aria-pressed', type.getAttribute('aria-pressed') !== 'true'); collect(); mark(); return; }
-    if (node) { collect(); [pipeline, stage] = node.dataset.node.split(':'); render(); el.querySelector('#wf-form textarea')?.focus({ preventScroll: true }); return; }
-    if (e.target.id === 'wf-add-use') { $('wf-use').insertAdjacentHTML('beforeend', useRow()); $('wf-use').lastElementChild.querySelector('input').focus(); }
-    if (e.target.closest('[data-drop-use]')) { e.target.closest('.fd-use').remove(); collect(); mark(); }
-    if (e.target.id === 'wf-reset') { if (draft[pipeline]) delete draft[pipeline][stage]; render(); }
-    if (e.target.id === 'wf-accept-all') act('/api/workflow/accept', { project: scope, ids: info.proposals.map(p => p.id) }, `${scope}: ${info.proposals.length} proposal(s) applied.`);
-    if (e.target.dataset.accept) act('/api/workflow/accept', { project: scope, ids: [e.target.dataset.accept] }, `${scope}: proposal applied.`);
-    if (e.target.dataset.dismiss) act('/api/workflow/dismiss', { project: scope, ids: [e.target.dataset.dismiss] }, `${scope}: proposal dismissed.`);
+    const node = e.target.closest('[data-node]'), type = e.target.closest('[data-type]'), pipe = e.target.closest('[data-pipe]'), reset = e.target.closest('[data-reset]'), insert = e.target.closest('[data-insert]');
+    if (type) { type.setAttribute('aria-pressed', type.getAttribute('aria-pressed') !== 'true'); edited(); return; }
+    if (node) { collect(); stage = node.dataset.node; render(); el.querySelector(`[data-node="${stage}"]`)?.focus({ preventScroll: true }); return; }
+    if (pipe) { collect(); pipeline = pipe.dataset.pipe; stage = info.shape[pipeline][1].stage; render(); return; }
+    if (reset) { for (const field of reset.dataset.reset.split(',')) delete draft[pipeline]?.[stage]?.[field]; if (draft[pipeline]?.[stage] && !Object.keys(draft[pipeline][stage]).length) delete draft[pipeline][stage]; render(); return; }
+    if (insert) {
+      const area = $('wf-form').elements.instructions, at = area.selectionStart ?? area.value.length;
+      area.setRangeText(insert.dataset.insert, at, area.selectionEnd ?? at, 'end'); area.focus(); edited(); return;
+    }
+    if (e.target.closest('[data-drop-use]')) { e.target.closest('.fd-use').remove(); edited(); }
+    if (e.target.id === 'wf-other-add') { addUse($('wf-other-ref').value.trim(), $('wf-other-kind').value); $('wf-other-ref').value = ''; }
+    if (e.target.id === 'wf-save') save();
+    if (e.target.id === 'wf-discard') { draft = structuredClone(info.override); render(); }
+    if (e.target.id === 'wf-accept-all') suggest('/api/workflow/accept', info.proposals.map(p => p.id), `${scope}: ${info.proposals.length} suggestion(s) applied.`);
+    if (e.target.dataset.accept) suggest('/api/workflow/accept', [e.target.dataset.accept], `${scope}: suggestion applied.`);
+    if (e.target.dataset.dismiss) suggest('/api/workflow/dismiss', [e.target.dataset.dismiss], `${scope}: suggestion dismissed.`);
   });
-  el.addEventListener('input', e => { if (e.target.closest('#wf-form, .fd-general')) { collect(); mark(); } });
+  el.addEventListener('input', e => { if (e.target.closest('#wf-form, .fd-general') && !e.target.closest('.fd-pick')) edited(); });
   el.addEventListener('change', e => {
     if (e.target.id === 'wf-scope') {
-      if (dirty() && !confirm('Discard the unsaved workflow changes?')) { e.target.value = scope; return; }
+      if (changes().length && !confirm('Discard the unsaved workflow changes?')) { e.target.value = scope; return; }
       scope = e.target.value; info = null; load();
     }
     if (e.target.id === 'wf-preview-type') { previewType = e.target.value; preview(); }
-    // Picking a known asset sets its kind.
-    if (e.target.dataset.use === 'ref' && info.assets) {
-      const known = [...info.assets.agents, ...info.assets.skills].find(a => a.ref === e.target.value.trim());
-      if (known) { e.target.closest('.fd-use').querySelector('[data-use=kind]').value = known.kind; collect(); mark(); }
+    if (e.target.id === 'wf-pick') {
+      const value = e.target.value;
+      $('wf-other').hidden = value !== 'other';
+      if (value === 'other') { $('wf-other-ref').focus(); return; }
+      if (value) { const [kind, ...ref] = value.split('|'); addUse(ref.join('|'), kind); }
+      e.target.value = '';
     }
   });
-  el.addEventListener('submit', e => {
-    e.preventDefault();
-    collect();
-    act('/api/workflow', { scope, workflow: draft }, `Workflow saved for ${scope === 'global' ? 'all projects' : scope}.`);
-  });
+  el.addEventListener('toggle', e => { if (e.target.id === 'wf-suggestions') showSuggestions = e.target.open; }, true);
+  el.addEventListener('submit', e => { e.preventDefault(); save(); });
+  el.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'wf-other-ref') { e.preventDefault(); $('wf-other-add').click(); } });
 
   return {
-    open() { if (!info && !loading) load(); else render(); },
+    open() { if (!info && !loading) load(); else if (!changes().length) render(); },
     // True while edits would be lost by a redraw.
-    busy: () => dirty(),
+    busy: () => changes().length > 0,
   };
 }
