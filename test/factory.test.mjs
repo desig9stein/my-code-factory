@@ -299,6 +299,9 @@ test('doctor reports a gate whose script is missing', () => {
 test('board writes the page and a data file with every issue', () => {
   assert.equal(cli('board', '--static', '--no-open').status, 0);
   assert.ok(fs.existsSync(path.join(ROOT, 'board.html')));
+  const page = fs.readFileSync(path.join(ROOT, 'board.html'), 'utf8');
+  assert.match(page, /<svg[^>]*class="fd-logo"/);
+  assert.match(page, /rel="icon" type="image\/svg\+xml" href="data:image\/svg\+xml,%3Csvg/);
   assert.match(fs.readFileSync(path.join(ROOT, 'board-data.js'), 'utf8'), /^window\.__factoryData\(\{.*"id":"demo-7"/);
 });
 

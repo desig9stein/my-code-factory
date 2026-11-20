@@ -208,3 +208,4 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark .fd-effect{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:10px 0 0;font-size:13px}#factory-dark .fd-effect dt{font:12px/1.7 ui-monospace,SFMono-Regular,monospace;color:var(--fd-accent);text-transform:uppercase;letter-spacing:.4px}#factory-dark .fd-effect dd{margin:0;color:var(--fd-fg)}#factory-dark .fd-effect dt:last-of-type,#factory-dark .fd-effect dt:last-of-type+dd{color:var(--fd-muted)}
 #factory-dark .fd-callout .fd-issue{align-items:flex-start}
 @container (max-width:560px){#factory-dark .fd-effect{grid-template-columns:minmax(0,1fr)}}
+#factory-dark .fd-logo{width:22px;height:25px;flex:none}#factory-dark .fd-brand{gap:9px;font-size:15px}
