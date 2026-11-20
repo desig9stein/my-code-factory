@@ -205,3 +205,6 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark button.fd-node-add{border-style:dashed;background:transparent;color:var(--fd-accent)}#factory-dark button.fd-node-add .fd-node-name{font-weight:500}
 #factory-dark .fd-newstep{margin-top:12px;border-color:var(--fd-accent)}#factory-dark .fd-newstep h3{margin:0;font-size:16px;font-weight:600}#factory-dark .fd-newstep-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 14px}
 #factory-dark .fd-editor-head .fd-actions{justify-content:flex-end}#factory-dark .fd-more label:first-of-type{margin-top:12px}
+#factory-dark .fd-effect{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:10px 0 0;font-size:13px}#factory-dark .fd-effect dt{font:12px/1.7 ui-monospace,SFMono-Regular,monospace;color:var(--fd-accent);text-transform:uppercase;letter-spacing:.4px}#factory-dark .fd-effect dd{margin:0;color:var(--fd-fg)}#factory-dark .fd-effect dt:last-of-type,#factory-dark .fd-effect dt:last-of-type+dd{color:var(--fd-muted)}
+#factory-dark .fd-callout .fd-issue{align-items:flex-start}
+@container (max-width:560px){#factory-dark .fd-effect{grid-template-columns:minmax(0,1fr)}}

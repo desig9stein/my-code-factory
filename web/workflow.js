@@ -113,7 +113,7 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
   function suggestions() {
     if (scope === 'global' || !info.assets || !info.proposals.length) return '';
     const reusable = info.assets.agents.length + info.assets.skills.length;
-    return `<details class="fd-callout" id="wf-suggestions" ${showSuggestions ? 'open' : ''}><summary><strong>${escape(scope)} already has ${reusable ? `${reusable} agent${reusable === 1 ? '' : 's'} and skill${reusable === 1 ? '' : 's'}` : 'instruction files'} you can reuse.</strong> ${info.proposals.length} suggestion${info.proposals.length === 1 ? '' : 's'} to review</summary><p class="fd-caption">Each suggestion is a guess from a file name. Accept the ones that fit; nothing changes until you do.</p><ul class="fd-issues">${info.proposals.map(p => `<li class="fd-issue"><div><p class="fd-issue-title">${escape(p.title)}</p><p class="fd-issue-meta"><span>${escape(p.reason)}</span></p>${p.note ? `<p class="fd-issue-meta fd-warning">${escape(p.note)}</p>` : ''}</div><div class="fd-issue-action"><button type="button" class="fd-btn" data-accept="${escape(p.id)}">Accept</button><button type="button" class="fd-btn fd-ghost" data-dismiss="${escape(p.id)}">Dismiss</button></div></li>`).join('')}</ul><div class="fd-actions fd-callout-foot"><button type="button" class="fd-btn" id="wf-accept-all">Accept all ${info.proposals.length}</button></div></details>`;
+    return `<details class="fd-callout" id="wf-suggestions" ${showSuggestions ? 'open' : ''}><summary><strong>${escape(scope)} already has ${reusable ? `${reusable} agent${reusable === 1 ? '' : 's'} and skill${reusable === 1 ? '' : 's'}` : 'instruction files'} you can reuse.</strong> ${info.proposals.length} suggestion${info.proposals.length === 1 ? '' : 's'} to review</summary><p class="fd-caption">Each suggestion is a guess from a file name, so read what it does before you accept it. Nothing changes until you accept, nothing is written into the repository, and every one can be undone.</p><ul class="fd-issues">${info.proposals.map(p => `<li class="fd-issue"><div><p class="fd-issue-title">${escape(p.title)}</p><p class="fd-issue-meta"><span>${escape(p.reason)}</span></p><dl class="fd-effect"><dt>If you accept</dt><dd>${escape(p.effect)}</dd><dt>To undo</dt><dd>${escape(p.undo)}</dd></dl>${p.note ? `<p class="fd-issue-meta fd-warning">${escape(p.note)}</p>` : ''}</div><div class="fd-issue-action">${p.action === 'use' ? `<button type="button" class="fd-btn fd-ghost" data-show-step="${escape(p.pipeline)}:${escape(p.stage)}">Show the step</button>` : ''}<button type="button" class="fd-btn" data-accept="${escape(p.id)}">Accept</button><button type="button" class="fd-btn fd-ghost" data-dismiss="${escape(p.id)}">Dismiss</button></div></li>`).join('')}</ul><div class="fd-actions fd-callout-foot"><button type="button" class="fd-btn" id="wf-accept-all">Accept all ${info.proposals.length}</button></div></details>`;
   }
 
   function inventory() {
@@ -255,8 +255,15 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     if (e.target.id === 'wf-other-add') { addUse($('wf-other-ref').value.trim(), $('wf-other-kind').value); $('wf-other-ref').value = ''; }
     if (e.target.id === 'wf-save') save();
     if (e.target.id === 'wf-discard') { draft = structuredClone(info.override); render(); }
+    if (e.target.id === 'wf-accept-all' && !confirm(`Accept all ${info.proposals.length} suggestions for ${scope}?\n\n${info.proposals.map(p => `• ${p.title}`).join('\n')}`)) return;
     if (e.target.id === 'wf-accept-all') suggest('/api/workflow/accept', info.proposals.map(p => p.id), `${scope}: ${info.proposals.length} suggestion(s) applied.`);
-    if (e.target.dataset.accept) suggest('/api/workflow/accept', [e.target.dataset.accept], `${scope}: suggestion applied.`);
+    if (e.target.dataset.showStep) { collect(); [pipeline, stage] = e.target.dataset.showStep.split(':'); render(); $('wf-form').scrollIntoView({ block: 'start', behavior: 'smooth' }); return; }
+    if (e.target.dataset.accept) {
+      const accepted = info.proposals.find(p => p.id === e.target.dataset.accept);
+      // Lands on the step the suggestion changed, so its effect is visible in the editor and the preview.
+      if (accepted?.action === 'use') { pipeline = accepted.pipeline; stage = accepted.stage; }
+      suggest('/api/workflow/accept', [accepted.id], `Accepted: ${accepted.title}. ${accepted.undo}`);
+    }
     if (e.target.dataset.dismiss) suggest('/api/workflow/dismiss', [e.target.dataset.dismiss], `${scope}: suggestion dismissed.`);
   });
   el.addEventListener('input', e => { if (e.target.closest('#wf-form, .fd-general') && !e.target.closest('.fd-pick')) edited(); });

@@ -237,6 +237,9 @@ test('proposes the bug implementer for implement limited to bugs, and a review s
   assert.deepEqual(implement.use, { ref: '.github/agents/bug-fixing-implementer-agent.md', kind: 'agent', types: ['bug'] });
   assert.deepEqual(proposals.filter((p) => p.use?.ref === 'review-component-pr').map((p) => `${p.pipeline}.${p.stage}`), ['review.draft', 'stages.verify']);
   assert.match(proposals.find((p) => p.use?.ref === 'review-component-pr').note, /Copies differ/);
+  assert.match(implement.effect, /When a bug task of app reaches the "implement" step, the agent is told to read \.github\/agents\/bug-fixing-implementer-agent\.md and work by it.*Other task types are not affected\. No file in the repository changes\./);
+  assert.match(implement.undo, /Open the "implement" step for app and remove it under "Skills and agents"/);
+  assert.match(proposals.find((p) => p.pipeline === 'review').effect, /When a pull request review of app reaches the "draft" step, the agent is told to invoke the skill "review-component-pr"/);
 });
 
 test('proposes the PR template headings, the instruction file and the scripts it names', () => {
@@ -244,6 +247,9 @@ test('proposes the PR template headings, the instruction file and the scripts it
   assert.deepEqual(proposals.find((p) => p.action === 'prBody').sections, ['Description', 'How to test', 'Checklist']);
   assert.deepEqual(proposals.find((p) => p.action === 'readFirst').files, ['AGENTS.md']);
   assert.deepEqual(proposals.filter((p) => p.action === 'gate').map((p) => p.gate), [{ name: 'lint', cmd: 'npm run lint' }, { name: 'test', cmd: 'npm test' }]);
+  assert.match(proposals.find((p) => p.id === 'gate:lint').effect, /Every app task must pass "npm run lint" at the "gates" step/);
+  assert.match(proposals.find((p) => p.action === 'prBody').note, /optional in most pull requests/);
+  for (const p of proposals) assert.ok(p.effect && p.undo, p.id);
 });
 
 test('accepting proposals applies them, and they are not offered again', () => {
