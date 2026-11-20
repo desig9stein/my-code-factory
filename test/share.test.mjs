@@ -161,10 +161,12 @@ test('the server serves the export and the workflow of a scope with its proposal
   const global = await (await call('/api/workflow?scope=global')).json();
   assert.deepEqual(global.override, { stages: { plan: { skipFor: ['docs'] } } });
   assert.equal(global.proposals.length, 0);
+  assert.equal(global.recommended.installed, false);
+  assert.match(global.recommended.install, /^claude plugin install mattpocock-skills/);
   assert.deepEqual(global.shape.stages.find((s) => s.stage === 'ready').fields, ['instructions', 'use', 'model']);
   const beta = await (await call('/api/workflow?scope=beta')).json();
   assert.deepEqual(beta.inherited.stages.plan.skipFor, ['docs']);
-  assert.deepEqual(beta.proposals.map((p) => p.stage), ['implement']);
+  assert.deepEqual(beta.proposals.filter((p) => p.action === 'use').map((p) => p.stage), ['implement']);
 });
 
 test('the server refuses a workflow save, accept and dismiss without the token', async () => {
@@ -190,6 +192,9 @@ test('the server applies an accepted proposal and hides a dismissed one', async 
   assert.deepEqual(registryAt(ROOT).repos.beta.workflow.stages.implement.use, [{ ref: '.github/agents/implementer.md', kind: 'agent' }]);
   assert.equal(registryAt(ROOT).repos.beta.workflow.stages.implement.instructions, 'Build it in {worktree}.');
   assert.equal((await call('/api/workflow/accept', { project: 'beta', ids: ['nope'] })).status, 400);
+  assert.equal((await call('/api/workflow/accept', { project: 'beta', ids: ['prEvidence'] })).status, 200);
+  assert.deepEqual(registryAt(ROOT).repos.beta.prBody.requiredSections, ['Evidence']);
+  assert.equal((await (await call('/api/workflow?scope=beta')).json()).proposals.some((p) => p.id === 'prEvidence'), false);
   assert.equal((await call('/api/workflow/dismiss', { project: 'beta', ids: ['gate:lint'] })).status, 200);
   assert.deepEqual(registryAt(ROOT).repos.beta.dismissedProposals, ['gate:lint']);
 });

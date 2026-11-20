@@ -90,11 +90,13 @@ beforeEach(() => {
 });
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-test('without a saved workflow the defaults hold: four types, four plan sections, reproduce only for bugs', () => {
+test('without a saved workflow the defaults hold: four types, five plan sections, reproduce only for bugs', () => {
   const w = resolveWorkflow('app');
   assert.deepEqual(w, defaultWorkflow());
   assert.deepEqual(w.types, ['bug', 'feature', 'docs', 'chore']);
-  assert.deepEqual(w.stages.plan.headings, ['Files', 'Tests', 'Consumer impact', 'Changelog']);
+  assert.deepEqual(w.stages.plan.headings, ['Files', 'Test boundaries', 'Tests', 'Consumer impact', 'Changelog']);
+  assert.equal(w.maxAttempts, 5);
+  assert.deepEqual(w.lessons, []);
   assert.deepEqual(w.stages.reproduce.skipFor, ['feature', 'docs', 'chore']);
   assert.deepEqual(w.stages.gates.requireRegression, ['bug']);
   assert.deepEqual(w.stages.verify.use, [{ ref: 'factory-verifier', kind: 'agent' }]);
@@ -106,7 +108,7 @@ test('a project override wins over the global value, which wins over the default
   saveWorkflow('app', { stages: { plan: { headings: ['Risks'] } } });
   assert.deepEqual(resolveWorkflow('app').stages.plan.headings, ['Risks']);
   assert.deepEqual(resolveWorkflow('other').stages.plan.headings, ['Files']);
-  assert.deepEqual(defaultWorkflow().stages.plan.headings.length, 4);
+  assert.deepEqual(defaultWorkflow().stages.plan.headings.length, 5);
   assert.deepEqual(registry().repos.app.workflow, { stages: { plan: { headings: ['Risks'] } } });
 });
 
@@ -352,7 +354,7 @@ test('an added step sits after its anchor and holds the task until its document 
   saveWorkflow('global', { customStages: [design], stages: { 'design-review': { instructions: 'Write {dir}/design.md.', use: [{ ref: 'design:design-critique', kind: 'skill' }] } } });
   assert.deepEqual(resolveWorkflow('app').order.slice(3, 6), ['plan', 'design-review', 'implement']);
   at('plan', 'feature');
-  write(path.join(DIR, 'plan.md'), '## Files\n\n## Tests\n\n## Consumer impact\n\n## Changelog\n');
+  write(path.join(DIR, 'plan.md'), '## Files\n\n## Test boundaries\n\n## Tests\n\n## Consumer impact\n\n## Changelog\n');
   assert.equal(step().moved, true);
   assert.equal(loadState(ID).stage, 'design-review');
   assert.match(step().problems[0], /design\.md is missing or empty/);
@@ -450,4 +452,127 @@ test('the user skill list includes plugin skills with their descriptions', () =>
   assert.deepEqual(skills.find((s) => s.name === 'mine'), { name: 'mine', description: 'My own skill.' });
   assert.deepEqual(skills.find((s) => s.name === 'design:ux-copy'), { name: 'design:ux-copy', description: 'Writes UX copy.' });
   assert.equal(skills.filter((s) => s.name.endsWith(':ux-copy')).length, 1);
+});
+
+const { attempts, capAttempts, sendBack, approvalKey } = await import('../lib/stages.mjs');
+const { proposeGlobal } = await import('../lib/assets.mjs');
+const { startServer } = await import('../lib/server.mjs');
+const failGate = () => runRecorded(loadState(ID), { name: 'verify', kind: 'gate', cmd: 'false', cwd: APP });
+
+test('a task stops for a person after the limit of failed check runs at one step', () => {
+  saveWorkflow('global', { maxAttempts: 3 });
+  at('gates', 'feature');
+  failGate(); failGate();
+  assert.deepEqual([attempts(loadState(ID)).failed, attempts(loadState(ID)).over], [2, false]);
+  assert.match(step().problems[0], /Gate "verify" is stale at HEAD/);
+  failGate();
+  const r = step();
+  assert.equal(r.moved, false);
+  assert.match(r.problems[0], /Blocked: 3 failed check runs at "gates"; the limit is 3\. A person should look before more attempts\./);
+  assert.match(loadState(ID).blocked.reason, /3 failed check runs/);
+  assert.match(cli('next', ID).out, /BLOCKED: 3 failed check runs/);
+});
+
+test('unblocking starts the count again', () => {
+  saveWorkflow('global', { maxAttempts: 3 });
+  assert.equal(cli('unblock', ID).status, 0);
+  assert.equal(attempts(loadState(ID)).failed, 0);
+  assert.match(step().problems[0], /Gate "verify" is stale at HEAD/);
+  assert.equal(loadState(ID).blocked, null);
+});
+
+test('running a failing check at the limit says the task is blocked', () => {
+  saveWorkflow('app', { maxAttempts: 2, customStages: [{ id: 'a11y', title: 'Accessibility', about: '', after: 'gates', check: { kind: 'command', cmd: 'false' } }] });
+  at('a11y', 'feature');
+  assert.doesNotMatch(cli('run', ID, 'a11y').out, /BLOCKED/);
+  assert.match(cli('next', ID).out, /Failed attempts at this step: 1 of 2\./);
+  assert.match(cli('run', ID, 'a11y').out, /BLOCKED: 2 failed check runs at "a11y"; the limit is 2\..* Stop and tell the user\./);
+});
+
+test('failed verifier verdicts count across the task, whatever step it is in', () => {
+  saveWorkflow('global', { maxAttempts: 2 });
+  at('gates', 'feature', { attemptsResetAt: new Date().toISOString() });
+  addVerdict(loadState(ID), { verdict: 'fail', report: 'no', prBodySha256: null });
+  assert.equal(capAttempts(loadState(ID)), null);
+  addVerdict(loadState(ID), { verdict: 'fail', report: 'no', prBodySha256: null });
+  assert.match(capAttempts(loadState(ID)), /2 failed verifier verdicts on this task; the limit is 2/);
+});
+
+test('the attempt limit and lessons are validated', () => {
+  assert.throws(() => saveWorkflow('global', { maxAttempts: 0 }), /maxAttempts must be a whole number from 1 to 20, got 0/);
+  assert.throws(() => saveWorkflow('global', { maxAttempts: 2.5 }), /maxAttempts must be a whole number/);
+  assert.throws(() => saveWorkflow('global', { lessons: ['a\nb'] }), /lessons must be at most 20 entries, each one line/);
+});
+
+test('a task at human review can be sent back with a reason, and its lesson reaches later briefs', () => {
+  at('ready', 'feature', { gatesSha: sh(APP, 'git rev-parse HEAD'), approvedSha: 'y' });
+  assert.throws(() => sendBack(loadState(ID), getRepo('app'), { reason: ' ' }), /needs a reason/);
+  sendBack(loadState(ID), getRepo('app'), { reason: 'The option was removed.', lesson: 'Never remove a public option without a deprecation.' });
+  const state = loadState(ID);
+  assert.deepEqual([state.stage, state.gatesSha, state.approvedSha], ['implement', null, null]);
+  assert.equal(state.history.at(-1).note, 'Sent back at human review: The option was removed.');
+  assert.deepEqual(registry().repos.app.workflow.lessons, ['Never remove a public option without a deprecation.']);
+  assert.match(formatBrief(stageBrief(state, getRepo('app'))), /Lessons from earlier human reviews of this project\. Apply every one that fits:\n {2}- Never remove a public option without a deprecation\./);
+  assert.throws(() => sendBack(loadState(ID), getRepo('app'), { reason: 'again' }), /is at "implement", not at human review/);
+  assert.equal(cli('reject', ID, '--reason', 'x').status, 1);
+});
+
+test('the server sends a task back only with the token and the version the board showed', async () => {
+  const state = at('ready', 'feature');
+  const server = await startServer(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];
+    const post = (headers, body) => fetch(`${base}/api/reject`, { method: 'POST', headers, body: JSON.stringify(body) });
+    assert.equal((await post({}, { id: ID, key: approvalKey(state), reason: 'x' })).status, 403);
+    assert.equal((await post({ 'x-factory-token': token }, { id: ID, key: 'stale', reason: 'x' })).status, 409);
+    assert.equal((await post({ 'x-factory-token': token }, { id: ID, key: approvalKey(state), reason: '' })).status, 400);
+    assert.equal((await post({ 'x-factory-token': token }, { id: ID, key: approvalKey(state), reason: 'Wrong fix.' })).status, 200);
+    assert.equal(loadState(ID).stage, 'implement');
+  } finally {
+    server.close();
+  }
+});
+
+test('the default instructions ask for a failing signal first, test-first work and a two-part verification', () => {
+  const w = defaultWorkflow();
+  assert.match(w.stages.reproduce.instructions, /Build a pass\/fail signal that fails because of this bug.*a failing test at the public boundary/);
+  assert.match(w.stages.implement.instructions, /write one failing test, then only the code that makes it pass/);
+  assert.match(w.stages.verify.instructions, /judges two things separately: standards .* and intent/);
+  assert.match(w.stages.verify.instructions, /the evidence \(output or a test run before and after\), and the merge risk/);
+  cli('hooks', '--install');
+  assert.match(fs.readFileSync(path.join(tmp, 'claude', 'agents', 'factory-verifier.md'), 'utf8'), /- Standards: .*\n {3}- Intent: /);
+});
+
+test('a glossary in the repository is suggested as a file to read first', () => {
+  write(path.join(APP, 'GLOSSARY.md'), '# Glossary\n');
+  sh(APP, 'git add -A && git commit -q -m "docs(app): add the glossary"');
+  assert.deepEqual(proposeForProject('app').proposals.find((p) => p.action === 'readFirst').files, ['AGENTS.md', 'GLOSSARY.md']);
+});
+
+test('recommended skills are named with their install command until they are installed', () => {
+  const { recommended, proposals } = proposeGlobal();
+  assert.equal(recommended.installed, false);
+  assert.equal(recommended.license, 'MIT');
+  assert.deepEqual(proposals, []);
+  assert.deepEqual(recommended.items.map((i) => `${i.skill}@${i.pipeline === 'review' ? 'review.' : ''}${i.stage}`), ['diagnosing-bugs@reproduce', 'tdd@implement', 'research@plan', 'code-review@verify', 'pr@verify', 'code-review@review.draft']);
+});
+
+test('installed recommended skills are suggested for their steps and applied to the shared workflow', () => {
+  for (const name of ['diagnosing-bugs', 'tdd', 'code-review']) write(path.join(tmp, 'claude', 'plugins', 'cache', 'mattpocock-skills', 'skills', name, 'SKILL.md'), skill(name, 'x'));
+  const { recommended, proposals } = proposeGlobal();
+  assert.equal(recommended.installed, true);
+  assert.deepEqual(proposals.map((p) => [p.pipeline, p.stage, p.use.ref, p.use.types]), [['stages', 'reproduce', 'mattpocock-skills:diagnosing-bugs', ['bug']], ['stages', 'implement', 'mattpocock-skills:tdd', undefined], ['stages', 'verify', 'mattpocock-skills:code-review', undefined], ['review', 'draft', 'mattpocock-skills:code-review', undefined]]);
+  assert.match(proposals[0].effect, /When a bug task of any project reaches the "reproduce" step, the agent is told to invoke the skill "mattpocock-skills:diagnosing-bugs"/);
+  acceptProposals('global', [proposals[1].id, proposals[2].id]);
+  const w = resolveWorkflow('app');
+  assert.deepEqual(w.stages.implement.use, [{ ref: 'mattpocock-skills:tdd', kind: 'skill' }]);
+  assert.deepEqual(w.stages.verify.use, [{ ref: 'factory-verifier', kind: 'agent' }, { ref: 'mattpocock-skills:code-review', kind: 'skill' }]);
+  dismissProposals('global', [proposals[0].id]);
+  assert.deepEqual(proposeGlobal().proposals.map((p) => p.stage), ['draft']);
+});
+
+test('a skill with a recommended name from another author is not mistaken for it', () => {
+  write(path.join(tmp, 'claude', 'skills', 'research', 'SKILL.md'), skill('research', 'Someone else.'));
+  assert.equal(proposeGlobal().recommended.items.find((i) => i.skill === 'research').installed, false);
 });

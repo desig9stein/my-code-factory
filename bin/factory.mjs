@@ -19,7 +19,7 @@ import { regress } from '../lib/regress.mjs';
 import { dayFacts, writePlainReport } from '../lib/report.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
-import { advance, approve, archive, gateStatus, inspect, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
+import { advance, approve, archive, capAttempts, gateStatus, inspect, sendBack, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
 import { formatTokens, issueTokens } from '../lib/tokens.mjs';
 import { brokenReferences, formatBrief, resolveWorkflow, stageBrief } from '../lib/workflow.mjs';
 import { exists, head, isDirty, listStates, loadState, move, saveState, sync } from '../lib/state.mjs';
@@ -51,6 +51,7 @@ const HELP = `Codeignite
   advance <id>                                         Check the stage exit rule and move on
   block <id> <reason> | unblock <id>                   Park an issue, or resume it
   approve <id>                                         the user only, in a terminal: allow the push
+  reject <id> --reason <text> [--lesson <text>]        the user only: send a task at human review back, and keep a lesson for later tasks
   pr <id> <url>                                        Record the opened PR
   archive <id> [--delete-branch]                       Hide a finished issue and remove its worktree
   board [--no-open] [--static] [--stop]                Open the kanban board (local server on 127.0.0.1)
@@ -371,6 +372,10 @@ const commands = {
     console.log(`$ ${spec.cmd}   (in ${spec.cwd})`);
     const record = runRecorded(state, { ...spec, actor });
     printRecord(state, record);
+    if (!record.ok && ['gate', 'step'].includes(spec.kind)) {
+      const capped = capAttempts(loadState(id));
+      if (capped) console.log(`\nBLOCKED: ${capped} Stop and tell the user.`);
+    }
     writeBoard();
     if (!record.ok) process.exitCode = 1;
   },
@@ -417,6 +422,8 @@ const commands = {
     const record = addVerdict(state, { verdict, report, prBodySha256: fs.existsSync(body) ? fileSha256(body) : null });
     fs.writeFileSync(path.join(issueDir(id), 'verify.md'), `Verdict: ${verdict}\nSHA: ${record.sha}\nRecorded: ${record.startedAt}\n\n${report}`);
     console.log(`Recorded verdict "${verdict}" at ${record.sha.slice(0, 8)} as record ${record.seq}.`);
+    const capped = verdict === 'fail' ? capAttempts(loadState(id)) : null;
+    if (capped) console.log(`\nBLOCKED: ${capped} Stop and tell the user.`);
     writeBoard();
   },
 
@@ -446,12 +453,23 @@ const commands = {
   unblock(args) {
     const state = loadState(args._[0]);
     state.blocked = null;
-    state.history.push({ stage: state.stage, at: new Date().toISOString(), note: 'Unblocked.' });
+    // Failed attempts are counted from here again.
+    state.attemptsResetAt = new Date().toISOString();
+    state.history.push({ stage: state.stage, at: state.attemptsResetAt, note: 'Unblocked.' });
     saveState(state);
     writeBoard();
     console.log(`${state.id} resumes at "${state.stage}".`);
   },
 
+  reject(args) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY || process.env.CLAUDECODE) {
+      throw new Error('reject runs only in an interactive terminal outside Claude Code. Open a terminal and run it there, or use "Send back" on the board.');
+    }
+    const state = sync(loadState(args._[0]));
+    sendBack(state, getRepo(state.repo), { reason: typeof args.reason === 'string' ? args.reason : args._.slice(1).join(' '), lesson: typeof args.lesson === 'string' ? args.lesson : '' });
+    writeBoard();
+    console.log(`${state.id} went back to "${state.stage}".${typeof args.lesson === 'string' ? ' The lesson is part of this project\'s briefs from now on.' : ''}`);
+  },
   async approve(args) {
     // Agent shells have no terminal and set CLAUDECODE, so only a person can approve.
     if (!process.stdin.isTTY || !process.stdout.isTTY || process.env.CLAUDECODE) {

@@ -37,12 +37,26 @@ Four issue stages also take a check setting:
 |-------|-------|---------|---------|
 | `reproduce` | `skipFor` | every type but `bug` | Types that pass the stage without a reproduction. |
 | `plan` | `skipFor` | none | Types that need no `plan.md`. |
-| `plan` | `headings` | `Files`, `Tests`, `Consumer impact`, `Changelog` | Required `##` sections. |
+| `plan` | `headings` | `Files`, `Test boundaries`, `Tests`, `Consumer impact`, `Changelog` | Required `##` sections. |
 | `gates` | `requireRegression` | `bug` | Types that need the regression proof. |
 | `verify` | `skipFor` | none | Types that need no verifier. The PR body and commit checks still apply. |
 | `verify` | `rerunGates` | `true` | Whether the verifier must re-run every gate. |
 
-Top-level fields: `types` (the task types triage may assign, default `bug`, `feature`, `docs`, `chore`) and `readFirst` (project files listed at the top of every brief).
+Top-level fields: `types` (the task types triage may assign, default `bug`, `feature`, `docs`, `chore`) and `readFirst` (project files listed at the top of every brief). Also `maxAttempts` and `lessons`, described under Brakes.
+
+### Brakes
+
+The workflow has three brakes: the gates, the independent verifier, and your review. Two settings keep an agent from running past them.
+
+**Attempt limit.** `maxAttempts` (default 5, from 1 to 20) caps failed check runs at one step and failed verifier verdicts on one task. At the limit the task is blocked with the count as its reason, `factory run` and `factory verdict` say so at once, and the brief tells the agent to stop. `factory unblock <id>` clears it and starts the count again. The brief shows the count while it grows.
+
+**Sending a task back.** At human review, "Send back" on the board returns the task to `implement`, or a review to `draft`, with your reason in its history. In a terminal the same is `factory reject <id> --reason <text> [--lesson <text>]`. Checks and approval start again on the next version. A lesson is one line added to the project's `lessons`; every later brief of that project lists them, so what a review caught reaches the next task. Lessons are edited under "Settings for every step" on the Workflow page. Like approval, sending back is for the user only: the board checks the version it showed, and the CLI refuses to run inside an agent session.
+
+The default instructions follow the same idea: `reproduce` asks for a pass/fail signal that fails because of the bug before any fix, `plan` names the test boundaries, `implement` works test-first at them, and `verify` has the verifier judge standards and intent separately in a fresh context and asks the PR description for evidence and merge risk.
+
+### Recommended skills
+
+The shared workflow suggests a third-party skill set when it fits the steps. Today that is Matt Pocock's engineering skills (MIT, https://github.com/mattpocock/skills): `diagnosing-bugs` for `reproduce`, `tdd` for `implement`, `research` for `plan`, `code-review` for `verify` and the review `draft`, `pr` for `verify`. The skills are not bundled, because the set updates itself as a Claude Code plugin; the Workflow page shows the install command until it is installed, then one suggestion per step. A skill with the same name from another source is not taken for one of these. Its `triage`, `to-spec` and `to-tickets` skills are left out because they post to the issue tracker on their own, and the `grill` skills because they need you in the conversation.
 
 A skipped stage records `Skipped: <stage> is off for type <type>.` in the task history. The definition is read when a task advances, so a change applies to tasks in flight from their next stage on.
 
@@ -96,7 +110,7 @@ Fixed, whatever the configuration says: the exit rules of `intake`, `triage`, `i
 
 Copies with the same name are listed once, preferring `.claude/`, and flagged when their text differs. An asset under `.claude/` is used by name. Any other is used by path, and the brief says "Read and follow `<path>`". Nothing is copied.
 
-Proposals are derived from asset names and are applied only when you accept them: a stage for an agent or skill (`implement` for an implementer, `triage` for an orchestrator, review `draft` and `verify` for a review skill, `gates` for a verify skill, `plan` for a changelog agent), `AGENTS.md` and `CLAUDE.md` as files to read first, the PR template headings as required PR sections, and a gate for each check script the instruction files name. The name matching is a heuristic; dismiss what does not fit. `factory doctor` reports a saved reference whose file is gone.
+Proposals are derived from asset names and are applied only when you accept them: a stage for an agent or skill (`implement` for an implementer, `triage` for an orchestrator, review `draft` and `verify` for a review skill, `gates` for a verify skill, `plan` for a changelog agent), `AGENTS.md`, `CLAUDE.md`, `GLOSSARY.md` and `CONTEXT.md` as files to read first, the PR template headings as required PR sections, an "Evidence" PR section where the template has no testing section, and a gate for each check script the instruction files name. The name matching is a heuristic; dismiss what does not fit. `factory doctor` reports a saved reference whose file is gone.
 
 ## Sharing the setup with a team
 

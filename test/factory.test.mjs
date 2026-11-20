@@ -161,10 +161,10 @@ test('a reproduction that exits 0 does not count', () => {
   assert.equal(cli('advance', ID).status, 0);
 });
 
-test('plan needs its four sections', () => {
+test('plan needs its five sections', () => {
   write(path.join(ISSUE, 'plan.md'), '## Files\nlib/add.mjs\n');
   assert.match(cli('advance', ID).out, /## Consumer impact/);
-  write(path.join(ISSUE, 'plan.md'), '## Files\nlib/add.mjs\n## Tests\nadd.test\n## Consumer impact\nNone.\n## Changelog\nNone.\n');
+  write(path.join(ISSUE, 'plan.md'), '## Files\nlib/add.mjs\n## Test boundaries\nadd()\n## Tests\nadd.test\n## Consumer impact\nNone.\n## Changelog\nNone.\n');
   assert.equal(cli('advance', ID).status, 0);
 });
 

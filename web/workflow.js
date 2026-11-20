@@ -29,6 +29,8 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     if (!same(draft.customStages, info.override.customStages) || !same(draft.removed, info.override.removed)) out.push('the list of steps');
     if (!same(draft.readFirst, info.override.readFirst)) out.push('files to read first');
     if (!same(draft.types, info.override.types)) out.push('task types');
+    if (!same(draft.maxAttempts, info.override.maxAttempts)) out.push('the attempt limit');
+    if (!same(draft.lessons, info.override.lessons)) out.push('lessons');
     return out;
   }
 
@@ -155,13 +157,18 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
 
   function basics() {
     const showTypes = scope === 'global';
-    return `<details class="fd-panel fd-general" ${draft.readFirst || draft.types ? 'open' : ''}><summary>Settings for every step${draft.readFirst || draft.types ? ' · customized' : ''}</summary><label>Files the agent reads before every step, one per line<textarea id="wf-read-first" rows="2" placeholder="AGENTS.md">${escape((draft.readFirst || info.inherited.readFirst).join('\n'))}</textarea></label>${showTypes ? `<label>Task types, one per line<textarea id="wf-types" rows="4">${escape(types().join('\n'))}</textarea></label><p class="fd-caption">Triage gives every task one of these types. The per-type choices above use them.</p>` : ''}</details>`;
+    const own = draft.readFirst || draft.types || draft.maxAttempts || draft.lessons;
+    const extra = `<label>Failed attempts before the task waits for you<input id="wf-max-attempts" type="number" min="1" max="20" step="1" value="${escape(draft.maxAttempts || info.inherited.maxAttempts)}"></label><p class="fd-caption">Counts failed check runs at one step, and failed verifier verdicts on one task. At the limit the task is blocked until you unblock it, so an agent cannot retry forever.</p><label>Lessons from your reviews, one per line<textarea id="wf-lessons" rows="3" placeholder="Never change a public option without a deprecation path.">${escape((draft.lessons || info.inherited.lessons).join('\n'))}</textarea></label><p class="fd-caption">Every brief lists these. "Send back" on a task adds one when you fill in its lesson.</p>`;
+    return `<details class="fd-panel fd-general" ${own ? 'open' : ''}><summary>Settings for every step${own ? ' · customized' : ''}</summary><label>Files the agent reads before every step, one per line<textarea id="wf-read-first" rows="2" placeholder="AGENTS.md">${escape((draft.readFirst || info.inherited.readFirst).join('\n'))}</textarea></label>${showTypes ? `<label>Task types, one per line<textarea id="wf-types" rows="4">${escape(types().join('\n'))}</textarea></label><p class="fd-caption">Triage gives every task one of these types. The per-type choices above use them.</p>` : ''}${extra}</details>`;
   }
 
   function suggestions() {
-    if (scope === 'global' || !info.assets || !info.proposals.length) return '';
-    const reusable = info.assets.agents.length + info.assets.skills.length;
-    return `<details class="fd-callout" id="wf-suggestions" ${showSuggestions ? 'open' : ''}><summary><strong>${escape(scope)} already has ${reusable ? `${reusable} agent${reusable === 1 ? '' : 's'} and skill${reusable === 1 ? '' : 's'}` : 'instruction files'} you can reuse.</strong> ${info.proposals.length} suggestion${info.proposals.length === 1 ? '' : 's'} to review</summary><p class="fd-caption">Each suggestion is a guess from a file name, so read what it does before you accept it. Nothing changes until you accept, nothing is written into the repository, and every one can be undone.</p><ul class="fd-issues">${info.proposals.map(p => `<li class="fd-issue"><div><p class="fd-issue-title">${escape(p.title)}</p><p class="fd-issue-meta"><span>${escape(p.reason)}</span></p><dl class="fd-effect"><dt>If you accept</dt><dd>${escape(p.effect)}</dd><dt>To undo</dt><dd>${escape(p.undo)}</dd></dl>${p.note ? `<p class="fd-issue-meta fd-warning">${escape(p.note)}</p>` : ''}</div><div class="fd-issue-action">${p.action === 'use' ? `<button type="button" class="fd-btn fd-ghost" data-show-step="${escape(p.pipeline)}:${escape(p.stage)}">Show the step</button>` : ''}<button type="button" class="fd-btn" data-accept="${escape(p.id)}">Accept</button><button type="button" class="fd-btn fd-ghost" data-dismiss="${escape(p.id)}">Dismiss</button></div></li>`).join('')}</ul><div class="fd-actions fd-callout-foot"><button type="button" class="fd-btn" id="wf-accept-all">Accept all ${info.proposals.length}</button></div></details>`;
+    const r = info.recommended;
+    if (scope === 'global' && r && !r.installed) return `<details class="fd-callout" id="wf-suggestions" ${showSuggestions ? 'open' : ''}><summary><strong>Recommended: ${escape(r.name)}.</strong> Not installed</summary><p class="fd-caption">A free set of skills by ${escape(r.author)} (${escape(r.license)} licence) that fits these steps. Codeignite does not bundle it; it updates itself as a Claude Code plugin. Install it in your terminal, then reopen this page to get a suggestion for each step:</p><pre>${escape(r.install)}</pre><ul class="fd-asset-list">${r.items.map(i => `<li><span class="fd-chip">${escape(i.skill)}</span><span class="fd-badge">${i.pipeline === 'review' ? 'review · ' : ''}${escape(i.stage)}</span><span class="fd-asset-desc">${escape(i.why)}</span></li>`).join('')}</ul><p class="fd-caption"><a href="${escape(r.url)}" target="_blank" rel="noopener noreferrer">${escape(r.url)}</a></p></details>`;
+    if (!info.proposals.length || (scope !== 'global' && !info.assets)) return '';
+    const reusable = info.assets ? info.assets.agents.length + info.assets.skills.length : 0;
+    const lead = scope === 'global' ? `${escape(r.name)} are installed.` : `${escape(scope)} already has ${reusable ? `${reusable} agent${reusable === 1 ? '' : 's'} and skill${reusable === 1 ? '' : 's'}` : 'instruction files'} you can reuse.`;
+    return `<details class="fd-callout" id="wf-suggestions" ${showSuggestions ? 'open' : ''}><summary><strong>${lead}</strong> ${info.proposals.length} suggestion${info.proposals.length === 1 ? '' : 's'} to review</summary><p class="fd-caption">${scope === 'global' ? 'Each suggestion puts one of these skills at the step it was written for, for every project.' : 'Each suggestion is a guess from a file name, so read what it does before you accept it.'} Nothing changes until you accept, nothing is written into a repository, and every one can be undone.</p><ul class="fd-issues">${info.proposals.map(p => `<li class="fd-issue"><div><p class="fd-issue-title">${escape(p.title)}</p><p class="fd-issue-meta"><span>${escape(p.reason)}</span></p><dl class="fd-effect"><dt>If you accept</dt><dd>${escape(p.effect)}</dd><dt>To undo</dt><dd>${escape(p.undo)}</dd></dl>${p.note ? `<p class="fd-issue-meta fd-warning">${escape(p.note)}</p>` : ''}</div><div class="fd-issue-action">${p.action === 'use' ? `<button type="button" class="fd-btn fd-ghost" data-show-step="${escape(p.pipeline)}:${escape(p.stage)}">Show the step</button>` : ''}<button type="button" class="fd-btn" data-accept="${escape(p.id)}">Accept</button><button type="button" class="fd-btn fd-ghost" data-dismiss="${escape(p.id)}">Dismiss</button></div></li>`).join('')}</ul><div class="fd-actions fd-callout-foot"><button type="button" class="fd-btn" id="wf-accept-all">Accept all ${info.proposals.length}</button></div></details>`;
   }
 
   function inventory() {
@@ -237,6 +244,9 @@ function mountWorkflow({ $, escape, post, served, notice, projects }) {
     if (!Object.keys(draft[pipeline]).length) delete draft[pipeline];
     const readFirst = lines($('wf-read-first').value);
     if (same(readFirst, info.inherited.readFirst)) delete draft.readFirst; else draft.readFirst = readFirst;
+    const limit = Number($('wf-max-attempts').value), lessons = lines($('wf-lessons').value);
+    if (limit === info.inherited.maxAttempts || !limit) delete draft.maxAttempts; else draft.maxAttempts = limit;
+    if (same(lessons, info.inherited.lessons)) delete draft.lessons; else draft.lessons = lessons;
     if ($('wf-types')) { const taskTypes = lines($('wf-types').value); if (same(taskTypes, info.inherited.types)) delete draft.types; else draft.types = taskTypes; }
   }
 
