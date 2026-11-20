@@ -582,3 +582,66 @@ test('a skill with a recommended name from another author is not mistaken for it
   write(path.join(tmp, 'claude', 'skills', 'research', 'SKILL.md'), skill('research', 'Someone else.'));
   assert.equal(proposeGlobal().recommended.items.find((i) => i.skill === 'research').installed, false);
 });
+
+const { unblock, blockKind } = await import('../lib/stages.mjs');
+const { boardData } = await import('../lib/board.mjs');
+const { linkSession, lastActivity } = await import('../lib/tokens.mjs');
+
+test('an unclear issue blocks the task, and the board says it waits for the user with the questions', () => {
+  at('triage', undefined);
+  write(path.join(DIR, 'triage.md'), 'Type: bug\nScope: the add function\nVerdict: unclear\n');
+  write(path.join(DIR, 'questions.md'), 'Which rounding do you want?\n');
+  const r = step();
+  assert.equal(r.moved, false);
+  assert.equal(blockKind(loadState(ID)), 'unclear');
+  const task = boardData().issues.find((i) => i.id === ID);
+  assert.deepEqual([task.blockedKind, task.actor, task.docs.questions], ['unclear', 'Agent', 'Which rounding do you want?\n']);
+  assert.match(task.questionsSha, /^[0-9a-f]{64}$/);
+  assert.equal(blockKind({ blocked: { reason: '3 failed check runs at "gates"; the limit is 3.' } }), 'attempts');
+  assert.equal(blockKind({ blocked: { reason: 'Waiting for design.' } }), 'other');
+});
+
+test('answering unblocks the task, and the agent must judge again before it can block a second time', () => {
+  unblock(loadState(ID), { note: 'Round half up.' });
+  const state = loadState(ID);
+  assert.equal(state.blocked, null);
+  assert.match(fs.readFileSync(path.join(DIR, 'answers.md'), 'utf8'), /^## \d{4}-.*\n\nRound half up\.\n$/);
+  assert.match(state.history.at(-1).note, /^Unblocked with an answer: Round half up\./);
+  const again = step();
+  assert.equal(again.moved, false);
+  assert.match(again.problems[0], /The user answered in .*answers\.md\. Read it, then update triage\.md/);
+  assert.equal(loadState(ID).blocked, null);
+  assert.match(formatBrief(stageBrief(loadState(ID), getRepo('app'))), /From the user:\n {2}- The user answered your questions or left a note in .*answers\.md\. Read it before anything else\./);
+  write(path.join(DIR, 'triage.md'), 'Type: bug\nScope: the add function\nVerdict: clear\n');
+  fs.utimesSync(path.join(DIR, 'triage.md'), new Date(Date.now() + 2000), new Date(Date.now() + 2000));
+  assert.equal(step().moved, true);
+});
+
+test('continuing without an answer tells the agent to proceed on its best reading', () => {
+  at('triage', undefined, { blocked: { reason: 'The issue is unclear. questions.md holds the draft for the user to review and post.', at: 'x' } });
+  fs.rmSync(path.join(DIR, 'answers.md'), { force: true });
+  unblock(loadState(ID));
+  assert.match(fs.readFileSync(path.join(DIR, 'answers.md'), 'utf8'), /The user decided the issue is clear enough to proceed/);
+  assert.equal(loadState(ID).history.at(-1).note, 'Unblocked.');
+  assert.throws(() => unblock(loadState(ID)), /is not blocked/);
+});
+
+test('the brief repeats why a task was sent back', () => {
+  at('ready', 'feature', { gatesSha: sh(APP, 'git rev-parse HEAD') });
+  sendBack(loadState(ID), getRepo('app'), { reason: 'The option was removed.' });
+  assert.match(formatBrief(stageBrief(loadState(ID), getRepo('app'))), /The user sent this task back at human review: The option was removed\. Fix that first\./);
+  assert.equal(boardData().issues.find((i) => i.id === ID).sentBack, 'The option was removed.');
+});
+
+test('the board knows when a linked session last worked, and which column a task belongs to', () => {
+  at('implement', 'feature');
+  assert.equal(lastActivity(ID), null);
+  const transcript = path.join(tmp, 'session.jsonl');
+  write(transcript, '{}\n');
+  fs.writeFileSync(path.join(DIR, 'sessions.json'), '[]');
+  linkSession(ID, transcript);
+  assert.ok(Date.now() - Date.parse(lastActivity(ID)) < 60_000);
+  const phase = (stage, extra) => { at(stage, 'feature', extra); return boardData().issues.find((i) => i.id === ID).phase; };
+  assert.deepEqual(['triage', 'plan', 'implement', 'gates', 'verify', 'ready', 'approved'].map((s) => phase(s)), ['start', 'start', 'build', 'check', 'check', 'review', 'ship']);
+  assert.deepEqual(['checks', 'draft', 'ready'].map((s) => phase(s, { kind: 'review' })), ['check', 'build', 'review']);
+});

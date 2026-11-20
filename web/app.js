@@ -32,6 +32,7 @@
     view = next;
     document.querySelectorAll('[data-view]').forEach(b => { b.setAttribute('aria-pressed', b.dataset.view === view); if (b.dataset.view === view) $('view-title').textContent = b.textContent; });
     ['work', 'github', 'report', 'projects', 'workflow', 'activity'].forEach(id => { $(id).hidden = id !== view; });
+    applyQueueMode();
     if (view === 'projects') loadSetup();
     if (view === 'workflow') workflow.open();
     if (view === 'report' && !report) loadReport();
@@ -66,13 +67,73 @@
     try { localStorage.setItem('factory-scenario-v1', JSON.stringify({ rates, object })); }
     catch { notice('Assumptions apply now, but this browser could not save them for next time.'); }
   }
-  // Links that open an agent session on the task, with the first message filled in.
-  function launch(i) {
-    if (!i.prompt || !i.worktree || i.stage === 'pr-opened' || i.stage === 'posted') return '';
-    const waiting = i.stage === 'ready' && !i.blocked;
+  // When a launch button was last used, per task, so the page stops offering it right away.
+  const launched = {};
+  let queueMode = 'list';
+  try { if (localStorage.getItem('factory-queue-mode') === 'board') queueMode = 'board'; } catch { /* The list is the default when storage is unavailable. */ }
+  const COLUMNS = [['you', 'Needs you'], ['start', 'Starting'], ['build', 'Building'], ['check', 'Checking'], ['ship', 'Shipping']];
+  // Blocked tasks and tasks at human review share the first column: both wait for the user.
+  const columnOf = (i) => (i.blocked || i.stage === 'ready' ? 'you' : i.phase === 'review' ? 'you' : i.phase || 'start');
+  function renderKanban() {
+    const card = (i) => `<button type="button" class="fd-kcard" data-task="${escape(i.id)}"><span class="fd-repo"><span>${escape(i.repo)}</span><span>${i.kind === 'review' ? 'PR ' : ''}#${escape(i.issue)}</span></span><strong>${escape(i.title)}</strong><span class="fd-kmeta"><span class="fd-badge ${i.blocked ? 'fd-badge-warn' : i.stage === 'ready' ? 'fd-badge-warn' : ''}">${escape(status(i))}</span>${i.lastActivity && Date.now() - Date.parse(i.lastActivity) < 5 * 60000 && !i.blocked ? '<span class="fd-klive"><span class="fd-dot"></span>agent working</span>' : ''}</span></button>`;
+    $('kanban').innerHTML = COLUMNS.map(([key, title]) => {
+      const items = data.issues.filter(i => columnOf(i) === key);
+      return `<section class="fd-kcol ${key === 'you' ? 'fd-kcol-you' : ''}" aria-label="${title}"><header><h3>${title}</h3><span>${items.length}</span></header>${items.map(card).join('') || '<p class="fd-kempty">Nothing here</p>'}</section>`;
+    }).join('');
+  }
+  function applyQueueMode() {
+    const onWork = view === 'work';
+    $('queue-mode').hidden = !onWork;
+    $('kanban').hidden = !onWork || queueMode !== 'board';
+    $('work').hidden = !onWork || queueMode === 'board';
+    for (const b of $('queue-mode').querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.mode === queueMode);
+  }
+  $('queue-mode').onclick = e => {
+    const mode = e.target.closest('[data-mode]')?.dataset.mode;
+    if (!mode) return;
+    queueMode = mode;
+    try { localStorage.setItem('factory-queue-mode', mode); } catch { /* The choice lasts for this visit only. */ }
+    applyQueueMode();
+  };
+  $('kanban').onclick = e => {
+    const card = e.target.closest('[data-task]');
+    if (card) { selected = card.dataset.task; scope = 'task'; queueMode = 'list'; applyQueueMode(); renderQueue(); renderDetail(); }
+  };
+  // Buttons that open an agent session on the task, with the first message filled in.
+  function launch(i, primary = true) {
+    if (!i.prompt || !i.worktree) return '';
     const terminal = `claude-cli://open?q=${encodeURIComponent(i.prompt)}&cwd=${encodeURIComponent(i.worktree)}`;
     const vscode = `vscode://anthropic.claude-code/open?prompt=${encodeURIComponent(i.prompt)}`;
-    return `<div class="fd-launch"><span class="fd-launch-title">${waiting ? 'This task waits for your review. To continue with an agent afterwards:' : 'Start the agent on this task'}</span><div class="fd-actions"><a class="fd-btn ${waiting ? '' : 'fd-primary'}" href="${escape(terminal)}">Open in terminal</a><a class="fd-btn" href="${escape(vscode)}">Open in VS Code</a><button class="fd-btn" type="button" data-copy-prompt>Copy the prompt</button></div><details class="fd-launch-help"><summary>How this works</summary><ul><li><strong>Terminal</strong> opens Claude Code in the task's folder with the message typed in. Press Enter to send it. It works after you have used <code>claude</code> in a terminal once on this machine.</li><li><strong>VS Code</strong> opens a new Claude Code chat in the window you last used, with the message typed in. Open the task's folder there first: <code>${escape(i.worktree)}</code></li><li><strong>WebStorm and other editors</strong> have no such link. Copy the prompt and paste it into the Claude panel or its terminal.</li></ul></details></div>`;
+    return `<div class="fd-actions"><a class="fd-btn ${primary ? 'fd-primary' : ''}" href="${escape(terminal)}">Open in terminal</a><a class="fd-btn" href="${escape(vscode)}">Open in VS Code</a><button class="fd-btn" type="button" data-copy-prompt>Copy the prompt</button></div><details class="fd-launch-help"><summary>How these buttons work</summary><ul><li><strong>Terminal</strong> opens Claude Code in the task's folder with the message typed in. Press Enter to send it. It works after you have used <code>claude</code> in a terminal once on this machine.</li><li><strong>VS Code</strong> opens a new Claude Code chat in the window you last used, with the message typed in. Open the task's folder there first: <code>${escape(i.worktree)}</code></li><li><strong>WebStorm and other editors</strong> have no such link. Copy the prompt and paste it into the Claude panel or its terminal.</li></ul></details>`;
+  }
+  // Says what is happening with the task and what the user can do about it, in one panel.
+  function nowPanel(i) {
+    const panel = (who, title, body) => `<section class="fd-now fd-now-${who}" aria-label="What is happening"><p class="fd-now-who">${who === 'you' ? 'Your turn' : who === 'done' ? 'Finished' : 'The agent\'s turn'}</p><h2>${title}</h2>${body}</section>`;
+    const name = escape(i.stageTitle || i.stage);
+    if (i.blocked && i.blockedKind === 'unclear') {
+      const posted = i.questionsPosted ? `<p class="fd-pass">You posted these on the issue${i.questionsPosted.url ? `: ${externalLink(i.questionsPosted.url, 'open the comment')}` : ''}. When the answer arrives, put it below so the agent can continue.</p>` : '';
+      return panel('you', 'The agent has questions before it starts', `<p>It read the issue and the code and found the issue unclear, so it stopped and wrote the questions below. Nothing was posted or changed.</p><pre class="fd-now-doc">${escape(i.docs.questions || 'The questions file is missing.')}</pre>${posted}<p>Choose what to do:</p><div class="fd-actions">${served ? `<button class="fd-btn fd-primary" type="button" data-unblock="answer">Answer here and continue</button>${i.questionsPosted ? '' : '<button class="fd-btn" type="button" data-post-questions>Post the questions on the issue</button>'}<button class="fd-btn" type="button" data-unblock="skip">Continue without answering</button>` : ''}<button class="fd-btn fd-ghost" type="button" data-copy-doc="questions">Copy the questions</button></div><p class="fd-caption">Answering sends your text to the agent, which reads it and judges the issue again. Posting puts the questions on GitHub under your name and keeps the task waiting. The reasoning behind the questions is under Task brief, Triage.</p>`);
+    }
+    if (i.blocked) {
+      const attempts = i.blockedKind === 'attempts';
+      return panel('you', attempts ? 'The agent kept failing at this step and stopped' : 'This task is paused', `<p>${escape(i.blocked)}</p>${attempts ? '<p>Look at the failed runs under <button class="fd-link" type="button" data-tab="evidence">Evidence</button>. If a check command itself is wrong, fix it under Projects. Then let the agent try again, with a hint if you have one.</p>' : ''}<div class="fd-actions">${served ? `<button class="fd-btn fd-primary" type="button" data-unblock="note">${attempts ? 'Let it try again' : 'Resume the task'}</button>` : ''}</div>`);
+    }
+    if (i.stage === 'ready') {
+      return panel('you', i.kind === 'review' ? 'Read the review draft, then decide' : 'Review the change, then decide', `<p>The checks passed${i.kind === 'review' ? '' : ' and the verifier agreed'}. Read <button class="fd-link" type="button" data-tab="${i.kind === 'review' ? 'review' : 'changes'}">${i.kind === 'review' ? 'the draft' : 'the changes'}</button>, <button class="fd-link" type="button" data-tab="evidence">the evidence</button> and <button class="fd-link" type="button" data-tab="brief">the PR description</button>. Approving lets the agent ${i.kind === 'review' ? 'post this review' : 'push and open the pull request'}. Sending back returns it to the agent with your reason.</p><div class="fd-actions">${served && i.approvalKey ? '<button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button>' : ''}</div>`);
+    }
+    if (i.stage === 'pr-opened' || i.stage === 'posted') {
+      return panel('done', i.stage === 'posted' ? 'The review is posted' : 'The pull request is open', `<p>${i.prUrl ? `${externalLink(i.prUrl, 'Open the pull request')}. ` : ''}Nothing more happens here. Archive the task ${i.stage === 'posted' ? 'when you are done with it' : 'once the pull request is merged'}.</p>`);
+    }
+    const missing = (i.missing || []).length ? `<p class="fd-now-label">Before this step is done:</p><ul class="fd-now-list">${i.missing.map(m => `<li>${escape(m)}</li>`).join('')}</ul>` : '<p class="fd-now-label">Nothing is missing for this step. The agent only has to move the task on.</p>';
+    const notes = `${i.sentBack ? `<p class="fd-warning">You sent this back: ${escape(i.sentBack)}</p>` : ''}${i.docs.answers ? '<p class="fd-caption">Your answer is waiting for the agent. It reads it when it next works on the task.</p>' : ''}${i.attempts?.failed ? `<p class="fd-caption">${i.attempts.failed} of ${i.attempts.max} failed attempts used at this step.</p>` : ''}`;
+    // A session counts as working while its transcript changed in the last few minutes, or right after you opened one here.
+    const minutes = i.lastActivity ? Math.max(0, Math.round((Date.now() - Date.parse(i.lastActivity)) / 60000)) : null;
+    const opened = Date.now() - (launched[i.id] || 0) < 3 * 60000;
+    let agent;
+    if (minutes !== null && minutes < 5) agent = `<p class="fd-now-live"><span class="fd-dot"></span>An agent session is working on this task. Last activity ${minutes < 1 ? 'under a minute' : `${minutes} min`} ago.</p><details class="fd-launch-more"><summary>Start another session anyway</summary>${launch(i, false)}</details>`;
+    else if (opened) agent = `<p class="fd-now-live"><span class="fd-dot"></span>You opened a session for this task a moment ago. Send the message there; this page updates when the agent starts working.</p><details class="fd-launch-more"><summary>It did not open? Try again</summary>${launch(i, false)}</details>`;
+    else agent = `<p class="fd-now-label">${minutes === null ? 'No agent session has worked on this task yet. Start one:' : `No agent is working on this task right now. The last session was active ${minutes < 90 ? `${minutes} min` : `${Math.round(minutes / 60)} h`} ago. Start one to continue:`}</p>${launch(i)}`;
+    return panel('agent', `Step: ${name}`, `<p>${escape(i.about || 'The agent works on this step.')}</p>${notes}${missing}${agent}`);
   }
   function renderQueue() {
     const items = [...data.issues].sort((a, b) => (b.blocked || b.stage === 'ready' ? 1 : 0) - (a.blocked || a.stage === 'ready' ? 1 : 0));
@@ -89,7 +150,7 @@
     const tabs = [['changes', 'Changes'], ['evidence', 'Evidence'], ['brief', 'Task brief'], ['usage', 'Usage']];
     if (i.kind === 'review') tabs.splice(1, 0, ['review', 'Review draft']);
     if (!tabs.some(([key]) => key === tab)) tab = 'usage';
-    $('detail').innerHTML = `<div class="fd-head"><div class="fd-kicker">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span>${escape(status(i))}</span></div><h1>${escape(i.title)}</h1>${i.blocked ? `<p class="fd-warning">${escape(i.blocked)}</p>` : ''}${launch(i)}<div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div><button class="fd-usage-strip" data-tab="usage">${i.tokens.availability === 'unavailable' ? 'Usage unavailable · link a supported session' : `${number(i.tokens.fresh)} new tokens · ${number(i.tokens.cacheRead)} cache-read tokens · ${i.tokens.sessions} linked session(s)`}</button></div><div class="fd-tabs" aria-label="Task sections">${tabs.map(([key, title]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${title}</button>`).join('')}</div><div class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served && i.approvalKey ? '<button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button>' : ''}${served ? '<button class="fd-btn" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>${i.approvalKey ? 'Approval covers the displayed commit and draft. It does not push, merge, or post.' : 'Checks and evidence stay tied to their recorded commit.'}</small></footer>`;
+    $('detail').innerHTML = `<div class="fd-head"><div class="fd-kicker">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span>${escape(status(i))}</span></div><h1>${escape(i.title)}</h1><div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div><button class="fd-usage-strip" data-tab="usage">${i.tokens.availability === 'unavailable' ? 'Usage unavailable · link a supported session' : `${number(i.tokens.fresh)} new tokens · ${number(i.tokens.cacheRead)} cache-read tokens · ${i.tokens.sessions} linked session(s)`}</button></div>${nowPanel(i)}<div class="fd-tabs" aria-label="Task sections">${tabs.map(([key, title]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${title}</button>`).join('')}</div><div class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served ? '<button class="fd-btn" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>${i.approvalKey ? 'Approval covers the displayed commit and draft. It does not push, merge, or post.' : 'Checks and evidence stay tied to their recorded commit.'}</small></footer>`;
     if (tab === 'usage') renderUsage(i);
     else if (tab === 'brief') $('body').innerHTML = doc('Next step for the agent', i.brief) + doc('Issue or pull request', i.docs.issue || i.docs.pr) + doc('Triage', i.docs.triage) + doc('Open questions', i.docs.questions) + doc('Plan', i.docs.plan) + doc('PR description', i.docs.prBody);
     else if (tab === 'review') $('body').innerHTML = doc('Review draft', i.docs.review);
@@ -337,13 +398,33 @@
     const events = data.issues.flatMap(i => i.history.map(h => ({ ...h, id: i.id }))).sort((a, b) => b.at.localeCompare(a.at));
     $('activity').innerHTML = '<h1>Activity</h1><p class="fd-desc">Recorded stage history for tasks currently in flight.</p>' + events.map(h => `<div class="fd-project"><p>${escape(h.id)} · <strong>${escape(h.stage)}</strong></p><p>${escape(h.note)}</p><span class="fd-caption">${escape(h.at)}</span></div>`).join('');
   }
-  function render() { renderQueue(); renderDetail(); renderProjects(); renderActivity(); }
+  function render() { renderQueue(); renderKanban(); applyQueueMode(); renderDetail(); renderProjects(); renderActivity(); }
   document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => show(button.dataset.view));
   $('search').oninput = e => { query = e.target.value; renderQueue(); };
   $('tasks').onclick = e => { const button = e.target.closest('[data-task]'); if (button) { selected = button.dataset.task; scope = 'task'; renderQueue(); renderDetail(); } };
   $('detail').onclick = e => {
     const button = e.target.closest('[data-tab]');
     if (button) { tab = button.dataset.tab; renderDetail(); }
+    const unblock = e.target.closest('[data-unblock]'), copyDoc = e.target.closest('[data-copy-doc]');
+    if (copyDoc) navigator.clipboard.writeText(task().docs[copyDoc.dataset.copyDoc] || '').then(() => notice('Copied.'), () => notice('Clipboard unavailable. Select the text and copy it.'));
+    if (unblock) {
+      const i = task(), mode = unblock.dataset.unblock;
+      pending = { id: i.id };
+      $('answer-form').reset(); $('answer-error').textContent = '';
+      $('answer-title').textContent = mode === 'answer' ? 'Answer the agent' : mode === 'skip' ? 'Continue without answering?' : 'Resume this task';
+      $('answer-text').textContent = mode === 'answer' ? 'Write your answers. The agent reads them, updates its triage, and either starts or comes back with what is still open.' : mode === 'skip' ? 'The agent is told the issue is clear enough, to use its best reading, and to state its assumptions in the plan. Add a note if you want to steer it.' : 'The task continues where it stopped and its failed attempts are counted from zero. Add a hint for the agent if you have one.';
+      $('answer-form').elements.note.required = mode === 'answer';
+      $('answer-label').textContent = mode === 'answer' ? 'Your answer' : 'Note for the agent (optional)';
+      $('answer-dialog').showModal(); $('answer-form').elements.note.focus();
+    }
+    if (e.target.closest('[data-post-questions]')) {
+      const i = task();
+      pending = { path: '/api/questions/post', body: { id: i.id, sha: i.questionsSha }, done: `${i.id}: questions posted on the issue.` };
+      $('action-title').textContent = 'Post these questions on GitHub?';
+      $('action-text').textContent = `The text shown on the page is posted as a comment on ${i.repo} #${i.issue}, under your GitHub name. Everyone who follows the issue sees it. The task keeps waiting until you put the answer here.`;
+      $('action-dialog').showModal();
+    }
+    if (e.target.closest('.fd-now a.fd-btn')) { launched[task().id] = Date.now(); setTimeout(renderDetail, 300); }
     if (e.target.closest('[data-copy-prompt]')) {
       navigator.clipboard.writeText(task().prompt).then(() => notice('Prompt copied. Paste it into your agent.'), () => notice('Clipboard unavailable. Run "factory next" for this task in your agent instead.'));
     }
@@ -361,6 +442,17 @@
       $('action-text').textContent = approving ? `${i.id}: approval covers commit ${(i.head || '').slice(0, 12)} and the displayed draft. Read the draft and evidence before confirming. This does not push or merge.` : `${i.id}: this removes the clean worktree and hides the task. The local branch and recorded evidence are kept. Dirty worktrees are refused.`;
       $('action-dialog').showModal();
     }
+  };
+  $('cancel-answer').onclick = () => $('answer-dialog').close();
+  $('answer-form').onsubmit = async e => {
+    e.preventDefault();
+    $('confirm-answer').disabled = true;
+    try {
+      await post('/api/unblock', { id: pending.id, note: e.target.elements.note.value });
+      notice(`${pending.id}: the task continues. Start the agent to carry on.`);
+      $('answer-dialog').close(); pending = null; refresh();
+    } catch (error) { $('answer-error').textContent = error.message; }
+    finally { $('confirm-answer').disabled = false; }
   };
   $('cancel-reject').onclick = () => $('reject-dialog').close();
   $('reject-form').onsubmit = async e => {
@@ -417,7 +509,7 @@
     if (next.workspace) $('workspace-note').textContent = `WORKSPACE ${next.workspace}`;
     if (next.stamp === data.stamp) return;
     // Keep drafts and open explanations stable while the user interacts.
-    if (data.stamp && (document.querySelector('dialog[open], #detail details[open]:not(.fd-setup):not(.fd-launch-help)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;
+    if (data.stamp && (document.querySelector('dialog[open], #detail .fd-body details[open]') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;
     data = next;
     if (!data.issues.some(i => i.id === selected)) selected = data.issues[0]?.id || null;
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()} · usage may lag up to 60 s`;

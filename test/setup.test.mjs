@@ -263,6 +263,28 @@ test('the board starts a task itself, and the task carries a prompt and a folder
   assert.match((await (await start({ project: 'gamma', number: 2, kind: 'new' })).json()).error, /gamma-2 already exists at stage "intake"/);
 });
 
+test('the board posts the drafted questions only as shown, and unblocks a task with an answer', async () => {
+  const dir = path.join(ROOT, 'issues', 'gamma-2');
+  write(path.join(dir, 'questions.md'), 'Which option?\n');
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8'));
+  write(path.join(dir, 'state.json'), JSON.stringify({ ...state, stage: 'triage', blocked: { reason: 'The issue is unclear. questions.md holds the draft for the user to review and post.', kind: 'unclear', at: 'x' } }));
+  const sha = (await import('node:crypto')).createHash('sha256').update('Which option?\n').digest('hex');
+  write(GH_OUT, 'https://github.com/acme/gamma/issues/2#issuecomment-1');
+  assert.equal((await call('/api/questions/post', { id: 'gamma-2', sha }, {})).status, 403);
+  assert.equal((await call('/api/questions/post', { id: 'gamma-2', sha: 'stale' })).status, 409);
+  const posted = await call('/api/questions/post', { id: 'gamma-2', sha });
+  assert.equal(posted.status, 200, await posted.clone().text());
+  assert.deepEqual(JSON.parse(fs.readFileSync(GH_LOG, 'utf8')), ['issue', 'comment', '2', '-R', 'acme/gamma', '--body-file', path.join(dir, 'questions.md')]);
+  const after = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8'));
+  assert.equal(after.questionsPosted.url, 'https://github.com/acme/gamma/issues/2#issuecomment-1');
+  assert.ok(after.blocked);
+  assert.equal((await call('/api/unblock', { id: 'gamma-2', note: 'Option B.' }, {})).status, 403);
+  assert.equal((await call('/api/unblock', { id: 'gamma-2', note: 'Option B.' })).status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).blocked, null);
+  assert.match(fs.readFileSync(path.join(dir, 'answers.md'), 'utf8'), /Option B\./);
+  assert.match((await (await call('/api/unblock', { id: 'gamma-2' })).json()).error, /is not blocked/);
+});
+
 test('the issues query defaults to issues assigned to you in every registered remote', async () => {
   write(GH_OUT, JSON.stringify([
     { number: 1, title: 'In flight', url: 'https://github.com/acme/gamma/issues/1', repository: { nameWithOwner: 'acme/gamma' }, labels: [{ name: 'bug' }], assignees: [{ login: 'me' }], updatedAt: '2026-01-02T00:00:00Z' },

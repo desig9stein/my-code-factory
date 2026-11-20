@@ -19,7 +19,7 @@ import { regress } from '../lib/regress.mjs';
 import { dayFacts, writePlainReport } from '../lib/report.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
-import { advance, approve, archive, capAttempts, gateStatus, inspect, sendBack, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
+import { advance, approve, archive, capAttempts, gateStatus, inspect, sendBack, unblock, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
 import { formatTokens, issueTokens } from '../lib/tokens.mjs';
 import { brokenReferences, formatBrief, resolveWorkflow, stageBrief } from '../lib/workflow.mjs';
 import { exists, head, isDirty, listStates, loadState, move, saveState, sync } from '../lib/state.mjs';
@@ -49,7 +49,7 @@ const HELP = `Codeignite
   verdict <id> pass|fail --report <file>               Verifier only: record the verdict and report
   next <id>                                            Print the brief of the current stage: what to do, which skill and agent to use
   advance <id>                                         Check the stage exit rule and move on
-  block <id> <reason> | unblock <id>                   Park an issue, or resume it
+  block <id> <reason> | unblock <id> [answer]          Park an issue, or resume it; the answer reaches the agent
   approve <id>                                         the user only, in a terminal: allow the push
   reject <id> --reason <text> [--lesson <text>]        the user only: send a task at human review back, and keep a lesson for later tasks
   pr <id> <url>                                        Record the opened PR
@@ -451,16 +451,10 @@ const commands = {
   },
 
   unblock(args) {
-    const state = loadState(args._[0]);
-    state.blocked = null;
-    // Failed attempts are counted from here again.
-    state.attemptsResetAt = new Date().toISOString();
-    state.history.push({ stage: state.stage, at: state.attemptsResetAt, note: 'Unblocked.' });
-    saveState(state);
+    const state = unblock(loadState(args._[0]), { note: args._.slice(1).join(' ') });
     writeBoard();
     console.log(`${state.id} resumes at "${state.stage}".`);
   },
-
   reject(args) {
     if (!process.stdin.isTTY || !process.stdout.isTTY || process.env.CLAUDECODE) {
       throw new Error('reject runs only in an interactive terminal outside Claude Code. Open a terminal and run it there, or use "Send back" on the board.');
