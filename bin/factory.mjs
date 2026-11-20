@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { hookSettings, installHooks } from '../lib/hooks.mjs';
+import { proposeForProject } from '../lib/assets.mjs';
+import { hookSettings, installAgentFiles, installHooks } from '../lib/hooks.mjs';
 import { addProject, discoverProjects, initialize, preflight } from '../lib/setup.mjs';
 import { writeBoard } from '../lib/board.mjs';
 import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } from '../lib/checks.mjs';
@@ -16,8 +17,9 @@ import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
-import { advance, approve, archive, gateStatus, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
+import { advance, approve, archive, gateStatus, inspect, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
 import { formatTokens, issueTokens } from '../lib/tokens.mjs';
+import { brokenReferences, formatBrief, stageBrief } from '../lib/workflow.mjs';
 import { exists, head, isDirty, listStates, loadState, move, saveState, sync } from '../lib/state.mjs';
 
 const HELP = `Software factory
@@ -39,13 +41,15 @@ const HELP = `Software factory
   regress <id> --tests <a,b> [--as verifier] -- <cmd>  Prove the test fails on base and passes on the fix
   check <id>                                           Check the commits and pr-body.md
   verdict <id> pass|fail --report <file>               Verifier only: record the verdict and report
+  next <id>                                            Print the brief of the current stage: what to do, which skill and agent to use
   advance <id>                                         Check the stage exit rule and move on
   block <id> <reason> | unblock <id>                   Park an issue, or resume it
   approve <id>                                         the user only, in a terminal: allow the push
   pr <id> <url>                                        Record the opened PR
   archive <id> [--delete-branch]                       Hide a finished issue and remove its worktree
   board [--no-open] [--static] [--stop]                Open the kanban board (local server on 127.0.0.1)
-  hooks [--install] [--settings <file>]                Print the Claude Code hook settings, or merge them into the settings file
+  hooks [--install] [--settings <file>]                Print the Claude Code hook settings, or install them with the factory skill and verifier agent
+  assets <project>                                     List the skills, agents and instruction files a project has, with proposals
   doctor                                               Compare the registry with the repos
 `;
 
@@ -490,6 +494,7 @@ const commands = {
       if (originHead !== repo.baseBranch && !repo.allowBaseMismatch) say(`baseBranch is ${repo.baseBranch}, origin/HEAD is ${originHead || 'unset'}.`);
       if (!tryGit(repo.dir, 'rev-parse', '--verify', `origin/${repo.baseBranch}`)) say(`origin/${repo.baseBranch} does not exist locally.`);
       if (repo.prTemplate && !fs.existsSync(path.join(repo.dir, repo.prTemplate))) say(`prTemplate ${repo.prTemplate} is missing.`);
+      for (const broken of brokenReferences(key, registry)) say(`workflow ${broken} does not exist in ${repo.dir}. Remove it on the Workflow page of the board.`);
       for (const g of repo.gates) {
         const m = /^(?:npm run|yarn)\s+([\w:.-]+)|^npm (test)\b/.exec(g.cmd);
         if (!m) continue;
@@ -504,10 +509,31 @@ const commands = {
     process.exitCode = 1;
   },
 
+  next(args) {
+    const state = sync(loadState(args._[0]));
+    const repo = getRepo(state.repo);
+    process.stdout.write(formatBrief(stageBrief(state, repo), inspect(state, repo)));
+  },
+
   hooks(args) {
     if (!args.install) return console.log(JSON.stringify(hookSettings(), null, 2));
     const result = installHooks(typeof args.settings === 'string' ? path.resolve(args.settings) : undefined);
     console.log(result.changed ? `Hooks merged into ${result.file}.${result.backup ? ` Previous version: ${result.backup}.` : ''} Restart Claude Code sessions to load them.` : `Hooks in ${result.file} are already current.`);
+    for (const file of installAgentFiles(path.dirname(result.file))) console.log(file.changed ? `Wrote ${file.file}.${file.backup ? ` Previous version: ${file.backup}.` : ''}` : `${file.file} is already current.`);
+  },
+
+  assets(args) {
+    const { assets, proposals } = proposeForProject(args._[0]);
+    const show = (title, items) => {
+      console.log(`\n${title} (${items.length})`);
+      for (const a of items) console.log(`  ${a.name.padEnd(36)} ${a.path}${a.differs ? '   [copies differ]' : ''}`);
+    };
+    show('Agents', assets.agents);
+    show('Contributor skills', assets.skills);
+    show('Product skills, not used for work on the repo', assets.products);
+    console.log(`\nInstruction files: ${assets.instructions.join(', ') || 'none'}\nPR template: ${assets.prTemplate || 'none'}`);
+    console.log(`\nProposals (${proposals.length}); accept them on the Workflow page of the board:`);
+    for (const p of proposals) console.log(`  - ${p.title}`);
   },
 
   help() {
@@ -558,6 +584,7 @@ function statusOne(state) {
     const what = r.kind === 'manual' ? `MANUAL: ${r.text}` : r.kind === 'verdict' ? `verdict ${r.verdict}` : `exit ${r.exitCode}, expected ${r.expect}`;
     console.log(`  ${String(r.seq).padStart(3)} ${r.ok ? 'ok    ' : 'FAILED'} ${r.name.padEnd(16)} ${r.actor.padEnd(11)} ${String(r.sha).slice(0, 8)} ${what}`);
   }
+  console.log(`\nNext step: factory next ${state.id}`);
   const tampered = verifyChain(state.id);
   console.log(tampered.length ? `\nEVIDENCE TAMPERED:\n${tampered.map((p) => `  - ${p}`).join('\n')}` : '\nEvidence chain intact.');
   console.log('\nHistory:');
