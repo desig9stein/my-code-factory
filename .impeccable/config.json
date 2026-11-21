@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "web/index.html"
+        ],
+        "createdAt": "2026-11-21T19:46:58.425Z",
+        "reason": "Agent triage: web/index.html:7 holds a style placeholder that lib/board.mjs fills at serve time, so the scan sees no CSS and reports every role at 16px. web/style.css sets 23px headings on 16px body."
+      }
+    ]
+  }
+}

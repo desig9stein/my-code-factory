@@ -1,0 +1,492 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-21T19:45:52.508Z",
+  "title": "Design System: Codeignite",
+  "extensions": {
+    "colorMeta": {
+      "lamp-sand": {
+        "role": "primary",
+        "displayName": "Lamp Sand",
+        "canonical": "#c3aa7c",
+        "tonalRamp": [
+          "#30291c",
+          "#56482e",
+          "#816b40",
+          "#af8e50",
+          "#bfa87e",
+          "#d1c3a9",
+          "#e3dccf",
+          "#f5f3ef"
+        ]
+      },
+      "paper-sand": {
+        "role": "primary",
+        "displayName": "Paper Sand",
+        "canonical": "#d1c6af",
+        "tonalRamp": [
+          "#2e291f",
+          "#514734",
+          "#796949",
+          "#a28c5d",
+          "#b6a686",
+          "#cbc2ae",
+          "#e0dbd1",
+          "#f4f3f0"
+        ]
+      },
+      "paper-sand-hover": {
+        "role": "primary",
+        "displayName": "Paper Sand Hover",
+        "canonical": "#e4dac5",
+        "tonalRamp": [
+          "#302a1c",
+          "#56492f",
+          "#816c41",
+          "#ae9051",
+          "#bea97e",
+          "#d0c4a9",
+          "#e3dccf",
+          "#f5f3ef"
+        ]
+      },
+      "ink-on-sand": {
+        "role": "primary",
+        "displayName": "Ink On Sand",
+        "canonical": "#191a18",
+        "tonalRamp": [
+          "#262725",
+          "#424440",
+          "#61645d",
+          "#80857a",
+          "#9ea29b",
+          "#bdbfbb",
+          "#d9dad8",
+          "#f2f3f2"
+        ]
+      },
+      "your-turn-tint": {
+        "role": "primary",
+        "displayName": "Your Turn Tint",
+        "canonical": "#211f19",
+        "tonalRamp": [
+          "#2a2822",
+          "#4a463b",
+          "#6d6755",
+          "#91886e",
+          "#aaa492",
+          "#c4c0b5",
+          "#dddbd5",
+          "#f3f3f1"
+        ]
+      },
+      "your-turn-edge": {
+        "role": "primary",
+        "displayName": "Your Turn Edge",
+        "canonical": "#6b5f45",
+        "tonalRamp": [
+          "#2c2820",
+          "#4e4737",
+          "#74684e",
+          "#9b8a64",
+          "#b1a58b",
+          "#c8c1b1",
+          "#dfdbd3",
+          "#f4f3f0"
+        ]
+      },
+      "sage": {
+        "role": "secondary",
+        "displayName": "Sage",
+        "canonical": "#a4ba99",
+        "tonalRamp": [
+          "#242c21",
+          "#3f4d38",
+          "#5b7250",
+          "#779867",
+          "#98af8d",
+          "#b9c7b2",
+          "#d7ded3",
+          "#f2f4f1"
+        ]
+      },
+      "clay": {
+        "role": "secondary",
+        "displayName": "Clay",
+        "canonical": "#e39484",
+        "tonalRamp": [
+          "#381b15",
+          "#642c21",
+          "#983c2a",
+          "#d04a2f",
+          "#d57a67",
+          "#dea69b",
+          "#eacdc7",
+          "#f7efed"
+        ]
+      },
+      "desk": {
+        "role": "neutral",
+        "displayName": "Desk",
+        "canonical": "#141515",
+        "tonalRamp": [
+          "#262727",
+          "#414444",
+          "#5f6363",
+          "#7c8383",
+          "#9ca0a0",
+          "#bbbebe",
+          "#d8d9d9",
+          "#f2f2f2"
+        ]
+      },
+      "rail": {
+        "role": "neutral",
+        "displayName": "Rail",
+        "canonical": "#111212",
+        "tonalRamp": [
+          "#252727",
+          "#414444",
+          "#5e6363",
+          "#7c8383",
+          "#9ca1a1",
+          "#bbbebe",
+          "#d8dada",
+          "#f2f2f2"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "canonical": "#191a1a",
+        "tonalRamp": [
+          "#262727",
+          "#414343",
+          "#5f6363",
+          "#7d8282",
+          "#9ca0a0",
+          "#bcbebe",
+          "#d8d9d9",
+          "#f2f2f2"
+        ]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Card",
+        "canonical": "#1a1b1b",
+        "tonalRamp": [
+          "#262727",
+          "#414343",
+          "#5f6363",
+          "#7d8282",
+          "#9ca0a0",
+          "#bcbebe",
+          "#d8d9d9",
+          "#f2f2f2"
+        ]
+      },
+      "card-hover": {
+        "role": "neutral",
+        "displayName": "Card Hover",
+        "canonical": "#202222",
+        "tonalRamp": [
+          "#252727",
+          "#414444",
+          "#5e6464",
+          "#7c8383",
+          "#9ba1a1",
+          "#bbbebe",
+          "#d8dada",
+          "#f2f2f2"
+        ]
+      },
+      "well": {
+        "role": "neutral",
+        "displayName": "Well",
+        "canonical": "#101212",
+        "tonalRamp": [
+          "#252828",
+          "#3f4545",
+          "#5c6666",
+          "#788787",
+          "#99a3a3",
+          "#bac0c0",
+          "#d7dada",
+          "#f2f3f3"
+        ]
+      },
+      "control": {
+        "role": "neutral",
+        "displayName": "Control",
+        "canonical": "#222424",
+        "tonalRamp": [
+          "#252727",
+          "#414444",
+          "#5e6363",
+          "#7c8383",
+          "#9ca1a1",
+          "#bbbebe",
+          "#d8dada",
+          "#f2f2f2"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Line",
+        "canonical": "#303232",
+        "tonalRamp": [
+          "#262727",
+          "#414343",
+          "#5f6363",
+          "#7d8282",
+          "#9ca0a0",
+          "#bcbebe",
+          "#d8d9d9",
+          "#f2f2f2"
+        ]
+      },
+      "edge": {
+        "role": "neutral",
+        "displayName": "Edge",
+        "canonical": "#3a3d3b",
+        "tonalRamp": [
+          "#262726",
+          "#414442",
+          "#5f6360",
+          "#7c837e",
+          "#9ca09d",
+          "#bbbebc",
+          "#d8d9d9",
+          "#f2f2f2"
+        ]
+      },
+      "boundary": {
+        "role": "neutral",
+        "displayName": "Boundary",
+        "canonical": "#6b6f6a",
+        "tonalRamp": [
+          "#262726",
+          "#424441",
+          "#60635f",
+          "#7e827d",
+          "#9da09c",
+          "#bcbebb",
+          "#d8d9d8",
+          "#f2f2f2"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Text",
+        "canonical": "#e1e1dc",
+        "tonalRamp": [
+          "#282824",
+          "#46463e",
+          "#68685a",
+          "#898976",
+          "#a5a597",
+          "#c1c1b9",
+          "#dbdbd7",
+          "#f3f3f2"
+        ]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Text Muted",
+        "canonical": "#a1a49f",
+        "tonalRamp": [
+          "#262726",
+          "#424441",
+          "#60635f",
+          "#7f837c",
+          "#9ea09c",
+          "#bcbebb",
+          "#d9d9d8",
+          "#f2f2f2"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Task and page titles."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "The heading of the \"now\" panel."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Text inside the task body."
+      },
+      "ui": {
+        "displayName": "UI",
+        "purpose": "Buttons, tabs, navigation, fields and cards."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Recorded facts: names, steps, counts, group headers."
+      }
+    },
+    "shadows": [
+      {
+        "name": "floating-list",
+        "value": "0 12px 32px #000a",
+        "purpose": "The open combo-box list."
+      },
+      {
+        "name": "save-bar",
+        "value": "0 8px 24px #0008",
+        "purpose": "The sticky unsaved-changes bar on the Workflow page."
+      },
+      {
+        "name": "live-pulse",
+        "value": "0 0 0 4px #a4ba9933",
+        "purpose": "The ring around the dot of an agent working now."
+      }
+    ],
+    "motion": [
+      {
+        "name": "border-hover",
+        "value": "border-color .15s",
+        "purpose": "Card and row hover. Removed under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "phone",
+        "value": "680px"
+      },
+      {
+        "name": "narrow",
+        "value": "880px"
+      },
+      {
+        "name": "wide",
+        "value": "1500px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action of a panel or dialog.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Approve this version</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;min-height:34px;padding:0 12px;border:1px solid #6b6f6a;border-radius:6px;background:#222424;color:#e1e1dc;font:14px/1.55 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;cursor:pointer}.ds-btn:hover{background:#252727}.ds-btn:focus-visible{outline:2px solid #c3aa7c;outline-offset:-2px}.ds-btn-primary{background:#d1c6af;border-color:#d1c6af;color:#191a18;font-weight:500}.ds-btn-primary:hover{background:#e4dac5}"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Any secondary action.",
+      "html": "<button class=\"ds-btn2\">Send back</button>",
+      "css": ".ds-btn2{display:inline-flex;align-items:center;min-height:34px;padding:0 12px;border:1px solid #6b6f6a;border-radius:6px;background:#222424;color:#e1e1dc;font:14px/1.55 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;cursor:pointer}.ds-btn2:hover{background:#252727}.ds-btn2:focus-visible{outline:2px solid #c3aa7c;outline-offset:-2px}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "A quiet action in a row of buttons.",
+      "html": "<button class=\"ds-btn-ghost\">Edit</button>",
+      "css": ".ds-btn-ghost{min-height:34px;padding:0 12px;border:1px solid transparent;border-radius:6px;background:none;color:#a1a49f;font:14px/1.55 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;cursor:pointer}.ds-btn-ghost:hover{background:#252727;color:#e1e1dc}.ds-btn-ghost:focus-visible{outline:2px solid #c3aa7c;outline-offset:-2px}"
+    },
+    {
+      "name": "Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A labelled text field with a caption.",
+      "html": "<label class=\"ds-field\">Base branch<input value=\"main\"><span>Checks run against this branch.</span></label>",
+      "css": ".ds-field{display:grid;gap:7px;font:14px/1.55 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;color:#e1e1dc}.ds-field input{height:40px;padding:0 12px;border:1px solid #6b6f6a;border-radius:6px;background:#101212;color:#e1e1dc;font:inherit}.ds-field input:focus-visible{outline:2px solid #c3aa7c;outline-offset:-1px;border-color:#c3aa7c}.ds-field span{font-size:13px;color:#a1a49f}"
+    },
+    {
+      "name": "Filter Chip",
+      "kind": "chip",
+      "refersTo": "chip-filter",
+      "description": "A toggle that filters a list, with a count.",
+      "html": "<button class=\"ds-chip\" aria-pressed=\"true\">Assigned <b>4</b></button> <button class=\"ds-chip\">Created <b>2</b></button>",
+      "css": ".ds-chip{border:1px solid #303232;border-radius:999px;padding:5px 12px;background:#1a1b1b;color:#a1a49f;font:13px/1.55 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;cursor:pointer}.ds-chip:hover{border-color:#3a3d3b;color:#e1e1dc}.ds-chip b{font-weight:500;margin-left:4px}.ds-chip[aria-pressed=true]{background:#d1c6af;border-color:#d1c6af;color:#191a18}.ds-chip:focus-visible{outline:2px solid #e1e1dc;outline-offset:2px}"
+    },
+    {
+      "name": "Project Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A page card with a header, content and footer.",
+      "html": "<article class=\"ds-card\"><h3>web-components</h3><p>Lit components. 3 checks.</p><footer><span class=\"ds-card-badge\">ready</span></footer></article>",
+      "css": ".ds-card{background:#1a1b1b;border:1px solid #303232;border-radius:10px;padding:16px;color:#e1e1dc;font:14px/1.55 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;transition:border-color .15s}.ds-card:hover{border-color:#3a3d3b}.ds-card h3{margin:0 0 10px;font-size:15px;font-weight:600}.ds-card p{margin:0 0 10px;color:#a1a49f}.ds-card footer{padding-top:12px;border-top:1px solid #303232}.ds-card-badge{border:1px solid #46543f;border-radius:999px;padding:1px 9px;font:12px/1.6 ui-monospace,SFMono-Regular,monospace;color:#a4ba99}"
+    },
+    {
+      "name": "Now Panel",
+      "kind": "custom",
+      "refersTo": "now-panel-you",
+      "description": "Says who acts, what the situation is and what the person can do.",
+      "html": "<section class=\"ds-now\"><p class=\"ds-now-who\">Your turn</p><h2>Review the change, then decide</h2><p>The checks passed and the verifier agreed.</p></section>",
+      "css": ".ds-now{padding:16px 18px;border:1px solid #6b5f45;border-radius:10px;background:#211f19;color:#e1e1dc;font:14px/1.55 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}.ds-now-who{margin:0 0 4px;font:12px/1.5 ui-monospace,SFMono-Regular,monospace;text-transform:uppercase;letter-spacing:.6px;color:#c3aa7c}.ds-now h2{margin:0 0 8px;font-size:18px;font-weight:600;letter-spacing:-.2px;color:#eadfc6}.ds-now p:last-child{margin:0}"
+    },
+    {
+      "name": "Step Trail",
+      "kind": "custom",
+      "description": "The path a task follows, with done, current and coming steps.",
+      "html": "<ol class=\"ds-steps\"><li class=\"ds-done\">triage (done)</li><li class=\"ds-current\"><span>implement</span></li><li>checks</li><li>verify</li></ol>",
+      "css": ".ds-steps{list-style:none;display:flex;flex-wrap:wrap;margin:0;padding:0;font:12px/1.5 ui-monospace,SFMono-Regular,monospace}.ds-steps li{padding:3px 10px 3px 0;color:#a1a49f}.ds-steps li:not(:last-child):after{content:\"›\";padding-left:10px}.ds-steps .ds-done{color:#a4ba99}.ds-steps .ds-current span{color:#e1e1dc;font-weight:600;border-bottom:2px solid #c3aa7c;padding-bottom:2px}"
+    },
+    {
+      "name": "Tabs",
+      "kind": "nav",
+      "description": "Sections of a task.",
+      "html": "<div class=\"ds-tabs\"><button aria-selected=\"true\">Overview</button><button>Changes</button><button>Evidence</button></div>",
+      "css": ".ds-tabs{display:flex;gap:22px;border-bottom:1px solid #303232}.ds-tabs button{padding:10px 0;border:0;border-bottom:1px solid transparent;background:none;color:#a1a49f;font:14px/1.55 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;cursor:pointer}.ds-tabs button[aria-selected=true]{color:#e1e1dc;border-bottom-color:#c3aa7c}.ds-tabs button:focus-visible{outline:2px solid #c3aa7c;outline-offset:-2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Review Desk",
+    "overview": "Codeignite looks like a quiet desk where work arrives with its evidence and a person signs it off. The surface is near-black and flat. Type is the system font at small sizes, with monospace for everything that is a record: repository names, branches, counts, step trails. One warm colour, Lamp Sand, marks what waits for the person at the desk.\n\nThe components feel like calm paperwork. Panels read top to bottom, each control has a caption that says what it does, and the reader decides only after reading. Nothing is decorative, and nothing moves except a border on hover.\n\nThe interface is compact and dark by commitment. No light theme exists.",
+    "keyCharacteristics": [
+      "Near-black, flat surfaces separated by hairlines.",
+      "One warm accent on a field of neutral greys.",
+      "System sans for prose, monospace for records.",
+      "Dense: most interface text is 12px to 14px.",
+      "Status is always written in words, with colour as a second signal."
+    ],
+    "rules": [
+      {
+        "name": "The One Lamp Rule",
+        "body": "Lamp Sand is the only accent hue. Sage means passed or live and Clay means failed; no other hue is used.",
+        "section": "colors"
+      },
+      {
+        "name": "The Words First Rule",
+        "body": "A status is written out (\"Your turn · answer the agent\", \"(done)\"). Colour repeats the word and never replaces it.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mono Is A Record Rule",
+        "body": "Monospace is for things the system recorded: names, paths, counts, steps, logs. Sentences are never set in mono.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Desk Rule",
+        "body": "Nothing at rest has a shadow. A shadow means the element floats above the page.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do write a status in words and let colour repeat it.",
+      "Do keep controls in one row at 40px, and buttons at 34px.",
+      "Do put a label above each field and a caption below a control whose effect is not obvious.",
+      "Do use Well for anything typed, logged or diffed, and Card for anything read.",
+      "Do use monospace for recorded facts and the system sans for sentences.",
+      "Do keep one primary button per panel or dialog.",
+      "Do name the action on a confirm button (\"Approve commit 1a2b3c4d5e6f\", \"Archive task\")."
+    ],
+    "donts": [
+      "Don't add a second accent hue. Lamp Sand, Sage and Clay are the whole set.",
+      "Don't add a shadow to anything that does not float.",
+      "Don't add a light theme.",
+      "Don't load a web font.",
+      "Don't set sentences in monospace.",
+      "Don't colour a link, a label or a notice with Lamp Sand.",
+      "Don't offer Approve where the changes, the evidence and the description are not on screen."
+    ]
+  }
+}

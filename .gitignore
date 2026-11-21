@@ -10,7 +10,7 @@ playwright-report/
 test-results/
 # Legacy runtime data must never be published.
 repos.json
-config.json
+/config.json
 issues/
 worktrees/
 board.html
