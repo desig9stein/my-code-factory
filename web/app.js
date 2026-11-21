@@ -21,11 +21,11 @@
   const task = () => data.issues.find(i => i.id === selected);
   const status = (i) => i.blocked ? 'Your turn · paused' : i.stage === 'ready' ? 'Your turn · review' : (i.stageTitle || i.stage).replaceAll('-', ' ');
   // Results and problems share one strip; a problem says so in words and can be dismissed.
-  const notice = (message, problem = false) => {
+  const notice = (message, problem = false, link = null) => {
     const box = $('notice');
     box.className = problem ? 'fd-notice-problem' : '';
     box.setAttribute('role', problem ? 'alert' : 'status');
-    box.innerHTML = message ? `<span>${problem ? 'Problem: ' : ''}${escape(message)}</span><button type="button" class="fd-link" id="notice-close">Dismiss</button>` : '';
+    box.innerHTML = message ? `<span>${problem ? 'Problem: ' : ''}${escape(message)}${link ? ` ${externalLink(link.url, link.text)}` : ''}</span><button type="button" class="fd-link" id="notice-close">Dismiss</button>` : '';
   };
   $('notice').onclick = e => { if (e.target.id === 'notice-close') notice(''); };
   // Mirrors TITLES in lib/workflow.mjs, for places that only have a stage key.
@@ -101,7 +101,7 @@
   const failingGate = (i) => i.gates.find(g => g.status === 'failed');
   // Says what the task waits for; colour is never the only signal.
   function queueStatus(i) {
-    if (i.blocked) return { text: i.blockedKind === 'unclear' ? 'Your turn · answer the agent' : i.blockedKind === 'attempts' ? 'Your turn · agent stopped' : 'Your turn · paused', cls: 'fd-fail' };
+    if (i.blocked) return { text: i.blockedKind === 'unclear' ? 'Your turn · answer the agent' : i.blockedKind === 'attempts' ? 'Your turn · agent stopped' : 'Your turn · paused', cls: i.blockedKind === 'attempts' ? 'fd-fail' : 'fd-warning' };
     if (i.stage === 'ready') return { text: 'Your turn · review', cls: 'fd-warning' };
     if (i.stage === 'approved') return { text: i.kind === 'review' ? 'Your turn · post the review' : 'Your turn · create the PR', cls: 'fd-warning' };
     const failed = failingGate(i);
@@ -156,17 +156,19 @@
     $('drawer').hidden = !i; $('board').classList.toggle('fd-board-open', Boolean(i));
     if (!i) { showPane('list'); return; }
     // The drawer leads with what to do, the same panel the task page shows; the agent's activity is one click below.
-    $('drawer').innerHTML = `<button class="fd-btn fd-back" data-close>← Board</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}</p><h2 class="fd-h1">${escape(i.title)}</h2>${nowPanel(i)}<div class="fd-actions"><button class="fd-btn" data-open="overview">Open the task</button><button class="fd-btn" data-open="changes">Read the changes</button><button class="fd-btn fd-ghost fd-drawer-close" data-close>Close</button></div><details class="fd-more fd-keep"><summary>What the agent did, step by step</summary>${i.activity ? agentActivity(i) : '<p class="fd-caption">No activity recorded.</p>'}</details>`;
+    $('drawer').innerHTML = `<button class="fd-btn fd-back" data-close>← Board</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}</p><h2 class="fd-h1">${escape(i.title)}</h2>${nowPanel(i, true)}<div class="fd-actions"><button class="fd-btn" data-open="overview">Open the task</button><button class="fd-btn" data-open="changes">Read the changes</button><button class="fd-btn fd-ghost fd-drawer-close" data-close>Close</button></div><details class="fd-more fd-keep"><summary>What the agent did, step by step</summary>${i.activity ? agentActivity(i) : '<p class="fd-caption">No activity recorded.</p>'}</details>`;
   }
   // Keeps "3 s ago" and the working marker current between data loads, without redrawing cards.
   function tick() {
     document.querySelectorAll('[data-live]').forEach(el => { const i = data.issues.find(x => x.id === el.dataset.live); if (i) el.innerHTML = liveInner(i); });
     if (!served) return;
     const working = data.issues.filter(isActive).length;
-    $('connection').textContent = lost ? 'Disconnected · showing last loaded data' : working ? `Live · ${working} agent${working === 1 ? '' : 's'} working` : 'Live · no agent working right now';
+    $('connection').textContent = lost ? 'Disconnected · showing last loaded data' : paused ? 'Paused · newer data loads when you finish here' : working ? `Live · ${working} agent${working === 1 ? '' : 's'} working` : 'Live · no agent working right now';
   }
   // Map: how the registered projects depend on each other, and what a change in one of them reaches.
   let mapSel = null, mapMode = 'explore';
+  // True while newer data waits for the user to leave a field, a log or a dialog.
+  let paused = false;
   // Buttons that open an agent session on the task, with the first message filled in.
   function launch(i, primary = true) {
     if (!i.prompt || !i.worktree) return '';
@@ -174,8 +176,12 @@
     const vscode = `vscode://anthropic.claude-code/open?prompt=${encodeURIComponent(i.prompt)}`;
     return `<div class="fd-actions"><a class="fd-btn ${primary ? 'fd-primary' : ''}" href="${escape(terminal)}">Open in terminal</a><a class="fd-btn" href="${escape(vscode)}">Open in VS Code</a><button class="fd-btn" type="button" data-copy-prompt>Copy the prompt</button></div><details class="fd-launch-help"><summary>How these buttons work</summary><ul><li><strong>Terminal</strong> opens Claude Code in the task's folder with the message typed in. Press Enter to send it. It works after you have used <code>claude</code> in a terminal once on this machine.</li><li><strong>VS Code</strong> opens a new Claude Code chat in the window you last used, with the message typed in. Open the task's folder there first: <code>${escape(i.worktree)}</code></li><li><strong>WebStorm and other editors</strong> have no such link. Copy the prompt and paste it into the Claude panel or its terminal.</li></ul></details>`;
   }
+  const canDecide = (i) => Boolean(served && i.stage === 'ready' && !i.blocked && i.approvalKey);
+  // Keeps the decision and its commit on screen while the user reads the task.
+  const decideBar = (i) => canDecide(i) ? `<footer class="fd-footer" aria-label="Your decision"><div class="fd-actions"><button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button><span class="fd-branch">commit ${escape((i.head || '').slice(0, 12))}</span></div></footer>` : '';
+  const archiveBlock = () => served ? '<section class="fd-archive"><h3>Archive</h3><p class="fd-caption">Archiving hides the task and removes its worktree. The branch and the recorded evidence are kept.</p><button class="fd-btn" data-action="archive">Archive task</button></section>' : '';
   // Says what is happening with the task and what the user can do about it, in one panel.
-  function nowPanel(i) {
+  function nowPanel(i, inDrawer = false) {
     const lead = { you: 'Your turn: ', agent: '', done: '' };
     const panel = (who, title, body) => `<section class="fd-now fd-now-${who}" aria-label="What is happening"><h3 class="fd-now-title">${lead[who]}${title}</h3>${body}</section>`;
     const name = escape(i.stageTitle || i.stage);
@@ -188,13 +194,13 @@
       return panel('you', attempts ? 'the agent kept failing at this step and stopped' : 'this task is paused', `<p>${escape(i.blocked)}</p>${attempts ? '<p>Look at the failed runs under <button class="fd-link" type="button" data-tab="evidence">Evidence</button>. If a check command itself is wrong, fix it under Projects. Then let the agent try again, with a hint if you have one.</p>' : ''}<div class="fd-actions">${served ? `<button class="fd-btn fd-primary" type="button" data-unblock="note">${attempts ? 'Let it try again' : 'Resume the task'}</button>` : ''}</div>`);
     }
     if (i.stage === 'ready') {
-      return panel('you', i.kind === 'review' ? 'read the review draft, then decide' : 'review the change, then decide', `<p>The checks passed${i.kind === 'review' ? '' : ' and the verifier agreed'}. Read <button class="fd-link" type="button" data-tab="${i.kind === 'review' ? 'review' : 'changes'}">${i.kind === 'review' ? 'the draft' : 'the changes'}</button>, <button class="fd-link" type="button" data-tab="evidence">the evidence</button> and <button class="fd-link" type="button" data-tab="brief">the PR description</button>. Approving lets the agent ${i.kind === 'review' ? 'post this review' : 'push and open the pull request'}. Sending back returns it to the agent with your reason.</p><div class="fd-actions">${served && i.approvalKey ? '<button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button>' : ''}</div><p class="fd-caption">Approval covers the commit and the text shown here. It does not push, merge or post by itself.</p>`);
+      return panel('you', i.kind === 'review' ? 'read the review draft, then decide' : 'review the change, then decide', `<p>The checks passed${i.kind === 'review' ? '' : ' and the verifier agreed'}. Read <button class="fd-link" type="button" data-tab="${i.kind === 'review' ? 'review' : 'changes'}">${i.kind === 'review' ? 'the draft' : 'the changes'}</button>, <button class="fd-link" type="button" data-tab="evidence">the evidence</button> and <button class="fd-link" type="button" data-tab="brief">the PR description</button>. Approving lets the agent ${i.kind === 'review' ? 'post this review' : 'push and open the pull request'}. Sending back returns it to the agent with your reason.</p>${inDrawer ? `<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-open="${i.kind === 'review' ? 'review' : 'changes'}">Review and decide</button></div><p class="fd-caption">You approve or send back on the task page, where the changes, the evidence and the description are on screen.</p>` : `<p class="fd-caption">${canDecide(i) ? 'Approve or send back in the bar at the bottom of this page. ' : ''}Approval covers the commit and the text shown here. It does not push, merge or post by itself.</p>`}`);
     }
     if (i.stage === 'approved' && i.kind === 'review') {
       return panel('you', 'you approved this review, now post it', `<p>Nothing has been posted yet.</p><div class="fd-actions">${served ? '<button class="fd-btn fd-primary" type="button" data-post-review>Post the review</button>' : ''}</div><p class="fd-caption">Posts the approved draft on the pull request with its verdict, under your GitHub name.</p>`);
     }
     if (i.stage === 'pr-opened' || i.stage === 'posted') {
-      return panel('done', i.stage === 'posted' ? 'The review is posted' : 'The pull request is open', `<p>${i.changes ? `${plural(i.changes.files, 'file')} changed, every check passed${i.verdict === 'pass' ? ' and the verifier agreed' : ''}. ` : ''}${i.prUrl ? `${externalLink(i.prUrl, 'Open the pull request')}. ` : ''}Nothing more happens here. Archive the task ${i.stage === 'posted' ? 'when you are done with it' : 'once the pull request is merged'}.</p>`);
+      return panel('done', i.stage === 'posted' ? 'The review is posted' : 'The pull request is open', `<p>${i.changes ? `${plural(i.changes.files, 'file')} changed, every check passed${i.verdict === 'pass' ? ' and the verifier agreed' : ''}. ` : ''}${i.prUrl ? `${externalLink(i.prUrl, 'Open the pull request')}. ` : ''}Nothing more happens here. Archive the task ${i.stage === 'posted' ? 'when you are done with it' : 'once the pull request is merged'}, at the bottom of Overview.</p>`);
     }
     const missing = (i.missing || []).length ? `<p class="fd-now-label">Before this step is done:</p><ul class="fd-now-list">${i.missing.map(m => `<li>${escape(m)}</li>`).join('')}</ul>` : '<p class="fd-now-label">Nothing is missing for this step. The agent only has to move the task on.</p>';
     const notes = `${i.sentBack ? `<p class="fd-warning">You sent this back: ${escape(i.sentBack)}</p>` : ''}${i.docs.answers ? '<p class="fd-caption">Your answer is waiting for the agent. It reads it when it next works on the task.</p>' : ''}${i.attempts?.failed ? `<p class="fd-caption">${i.attempts.failed} of ${i.attempts.max} failed attempts used at this step.</p>` : ''}`;
@@ -230,9 +236,9 @@
     const tabs = [['overview', 'Overview'], ['changes', 'Changes'], ['evidence', 'Evidence'], ['agent', 'Agent activity'], ['brief', 'Task brief'], ['usage', 'Usage']];
     if (i.kind === 'review') tabs.splice(1, 0, ['review', 'Review draft']);
     if (!tabs.some(([key]) => key === tab)) tab = 'overview';
-    $('detail').innerHTML = `<div class="fd-head"><button class="fd-btn fd-back" data-back>← All tasks</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span class="${queueStatus(i).cls}">${escape(queueStatus(i).text)}</span>${i.tier === 'trivial' ? '<span class="fd-muted">trivial change</span>' : ''}</p><h2 class="fd-h1">${escape(i.title)}</h2><div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div>${progress(i)}</div>${nowPanel(i)}<div class="fd-tabs" role="tablist" aria-label="Task sections">${tabs.map(([key, title]) => `<button role="tab" id="tab-${key}" data-tab="${key}" aria-selected="${tab === key}" aria-controls="body">${title}</button>`).join('')}</div><div role="tabpanel" aria-labelledby="tab-${tab}" class="fd-body" id="body"></div><footer class="fd-footer"><div class="fd-actions">${served ? '<button class="fd-btn fd-ghost" data-action="archive">Archive task</button>' : ''}${i.prUrl ? externalLink(i.prUrl, 'Open pull request') : ''}</div><small>Archiving hides the task and removes its worktree. The branch and the recorded evidence are kept.</small></footer>`;
+    $('detail').innerHTML = `<div class="fd-head"><button class="fd-btn fd-back" data-back>← All tasks</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span class="${queueStatus(i).cls}">${escape(queueStatus(i).text)}</span>${i.tier === 'trivial' ? '<span class="fd-muted">trivial change</span>' : ''}</p><h2 class="fd-h1">${escape(i.title)}</h2><div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div>${progress(i)}</div>${nowPanel(i)}<div class="fd-tabs" role="tablist" aria-label="Task sections">${tabs.map(([key, title]) => `<button role="tab" id="tab-${key}" data-tab="${key}" aria-selected="${tab === key}" aria-controls="body">${title}</button>`).join('')}</div><div role="tabpanel" aria-labelledby="tab-${tab}" class="fd-body" id="body"></div>${decideBar(i)}`;
     if (tab === 'usage') renderUsage(i);
-    else if (tab === 'overview') renderOverview(i);
+    else if (tab === 'overview') { renderOverview(i); $('body').insertAdjacentHTML('beforeend', archiveBlock()); }
     else if (tab === 'agent') $('body').innerHTML = i.activity ? agentActivity(i) : '<p class="fd-caption">No activity data for this task.</p>';
     else if (tab === 'brief') $('body').innerHTML = doc('Next step for the agent', i.brief) + doc('Issue or pull request', i.docs.issue || i.docs.pr) + doc('Triage', i.docs.triage) + doc('Open questions', i.docs.questions) + doc('Plan', i.docs.plan) + doc('PR description', i.docs.prBody);
     else if (tab === 'review') $('body').innerHTML = doc('Review draft', i.docs.review);
@@ -448,7 +454,7 @@
       pending = { path: '/api/project/remove', body: { key }, done: `${key}: removed from the registry.` };
       $('action-title').textContent = 'Remove this project?';
       $('action-text').textContent = `${key}: this removes the project from the factory registry. The repository folder, its branches and recorded task history are kept. A project with tasks in flight is refused.`;
-      $('action-dialog').showModal();
+      openAction('Remove project');
     }
   };
   async function loadGithub(fresh) {
@@ -602,23 +608,31 @@
   function render() { renderQueue(); renderBoard(); applyQueueMode(); renderDetail(); renderMap(); renderProjects(); renderActivity(); renderMetrics(); tick(); }
   // On a small screen the queue and the detail are separate screens.
   const showPane = (pane) => { document.body.dataset.pane = pane; };
+  // Opens the confirm dialog with a button that names the action.
+  function openAction(label = 'Confirm') { $('confirm-action').textContent = label; $('action-error').textContent = ''; $('action-dialog').showModal(); }
   // Writes the current place into the address as #view, #work/<task> or #work/<task>/<tab>.
-  let hashReady = false;
+  let hashReady = false, applying = false;
+  let placed = false;
   function syncHash() {
-    if (!hashReady) return;
+    if (!hashReady || applying) return;
     const onTask = view === 'work' && queueMode === 'list' && selected;
     const next = `#${view}${onTask ? `/${encodeURIComponent(selected)}${tab !== 'overview' ? `/${tab}` : ''}` : ''}`;
-    if (location.hash !== next) history.replaceState(null, '', next);
+    // The first address replaces the entry the page loaded with; later ones add to the history.
+    if (location.hash !== next) { history[placed ? 'pushState' : 'replaceState'](null, '', next); placed = true; }
   }
   // Opens what the address names; unknown parts are ignored.
-  function applyHash() {
+  function applyHash(fromHistory = false) {
     const [name, id, part] = location.hash.slice(1).split('/').map(decodeURIComponent);
     if (!document.querySelector(`.fd-nav [data-view="${CSS.escape(name || '')}"]`)) return;
+    applying = true;
     if (name === 'work' && id && data.issues.some(i => i.id === id)) { selected = id; tab = part || 'overview'; queueMode = 'list'; }
+    // "#work" alone is the board, or a list with no task open.
+    else if (name === 'work' && !id && fromHistory && data.issues.length) queueMode = 'board';
     show(name);
     if (name === 'work') { renderQueue(); renderDetail(); }
+    applying = false; placed = true;
   }
-  addEventListener('hashchange', applyHash);
+  addEventListener('hashchange', () => applyHash(true));
   const openTask = (id, to = 'overview') => { selected = id; tab = to; scope = 'task'; show('work'); queueMode = 'list'; applyQueueMode(); renderQueue(); renderDetail(); showPane('detail'); $('detail').focus({ preventScroll: true }); syncHash(); };
   const pickNode = (key, from) => { mapSel = key; renderMap(); (from === 'panel' ? $('map-panel') : document.querySelector(`#map ${from === 'tree' ? '.fd-leaf' : '.fd-gnode'}[data-node="${CSS.escape(key)}"]`))?.focus({ preventScroll: true }); };
   $('map').onclick = e => {
@@ -694,14 +708,14 @@
       pending = { path: '/api/review/post', body: { id: i.id }, done: `${i.id}: review posted.` };
       $('action-title').textContent = 'Post this review on GitHub?';
       $('action-text').textContent = `The approved draft is posted on ${i.repo} PR #${i.issue} with its verdict, under your GitHub name. Everyone who follows the pull request sees it.`;
-      $('action-dialog').showModal();
+      openAction('Post the review');
     }
     if (e.target.closest('[data-post-questions]')) {
       const i = task();
       pending = { path: '/api/questions/post', body: { id: i.id, sha: i.questionsSha }, done: `${i.id}: questions posted on the issue.` };
       $('action-title').textContent = 'Post these questions on GitHub?';
       $('action-text').textContent = `The text shown on the page is posted as a comment on ${i.repo} #${i.issue}, under your GitHub name. Everyone who follows the issue sees it. The task keeps waiting until you put the answer here.`;
-      $('action-dialog').showModal();
+      openAction('Post the questions');
     }
     if (e.target.closest('.fd-now a.fd-btn')) { launched[task().id] = Date.now(); setTimeout(renderDetail, 300); }
     if (e.target.closest('[data-copy-prompt]')) {
@@ -719,7 +733,7 @@
       pending = { path: `/api/${action.dataset.action}`, body: { id: i.id, key: i.approvalKey }, done: `${i.id}: ${approving ? 'approved' : 'archived'}.` };
       $('action-title').textContent = approving ? 'Approve this version?' : 'Archive this task?';
       $('action-text').textContent = approving ? `${i.id}: approval covers commit ${(i.head || '').slice(0, 12)} and the displayed draft. Read the draft and evidence before confirming. This does not push or merge.` : `${i.id}: this removes the clean worktree and hides the task. The local branch and recorded evidence are kept. Dirty worktrees are refused.`;
-      $('action-dialog').showModal();
+      openAction(!approving ? 'Archive task' : i.kind === 'review' ? 'Approve this draft' : `Approve commit ${(i.head || '').slice(0, 12)}`);
     }
   };
   for (const host of ['detail', 'drawer']) $(host).addEventListener('submit', async e => {
@@ -760,7 +774,7 @@
       const draft = form.elements.draft.value === '1';
       const result = await post('/api/pr/create', { id: pending.id, title: form.elements.title.value, draft, reviewers: picked.reviewers, assignees: picked.assignees });
       try { localStorage.setItem(`factory-pr-${task()?.repo}`, JSON.stringify({ draft, ...picked })); } catch { /* The choice is not remembered. */ }
-      notice(`${pending.id}: pull request created. ${result.url}`);
+      notice(`${pending.id}: pull request created.`, false, { url: result.url, text: 'Open the pull request' });
       $('pr-dialog').close(); pending = null; refresh();
     } catch (error) { $('pr-create-error').textContent = error.message; }
     finally { $('confirm-pr').disabled = false; $('confirm-pr').textContent = 'Push and create'; }
@@ -797,7 +811,7 @@
       await post(request.path, request.body);
       notice(request.done);
       $('action-dialog').close(); pending = null; gh = null; refresh(); loadSetup();
-    } catch (error) { $('action-text').textContent = error.message; }
+    } catch (error) { $('action-error').textContent = error.message; }
     finally { $('confirm-action').disabled = false; }
   };
   function newCommand() {
@@ -842,29 +856,33 @@
     catch { notice('Clipboard unavailable. Select and copy the command shown in the dialog.'); }
   };
   // The server could not build the board data, for example because repos.json is damaged.
-  window.__factoryError = message => { lost = false; notice(`The board data could not be loaded: ${message}`); if (served) $('connection').textContent = 'Connected · data unavailable'; };
+  window.__factoryError = message => { lost = false; notice(`The board data could not be loaded: ${message}`, true); if (served) $('connection').textContent = 'Connected · data unavailable'; };
   window.__factoryData = next => {
     lost = false; if (!served) $('connection').textContent = 'Static snapshot';
     if (next.workspace) $('workspace-note').textContent = `WORKSPACE ${next.workspace}`;
     if (next.stamp === data.stamp) return;
     // Keep drafts and open explanations stable while the user interacts.
-    if (data.stamp && (document.querySelector('dialog[open], #detail .fd-body details[open]:not(.fd-keep)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) return;
+    if (data.stamp && (document.querySelector('dialog[open], #detail .fd-body details[open]:not(.fd-keep)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) { paused = true; tick(); return; }
+    paused = false;
     data = next;
     if (!data.issues.some(i => i.id === peek)) peek = null;
     // Opens on the task that waits for the user, when there is one.
     if (!data.issues.some(i => i.id === selected)) selected = (data.issues.find(i => i.stage === 'ready' && !i.blocked) || data.issues.find(needsYou) || data.issues[0])?.id || null;
     const skipped = data.skipped || [];
-    if (skipped.length) notice(`${skipped.length} task${skipped.length === 1 ? '' : 's'} could not be shown. ${skipped.map(x => `${x.id}: ${x.reason}`).join(' ')}`);
+    if (skipped.length) notice(`${skipped.length} task${skipped.length === 1 ? '' : 's'} could not be shown. ${skipped.map(x => `${x.id}: ${x.reason}`).join(' ')}`, true);
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()} · usage may lag up to 60 s`;
     // A redraw replaces the focused element; the one that stands for the same thing gets focus back.
     const held = document.activeElement, holder = held?.closest?.('section[id], aside[id], article[id]');
-    const key = held && holder && ['task', 'peek', 'tab', 'node', 'edit', 'mode', 'openTask'].find(k => held.dataset?.[k] !== undefined);
+    const key = held && holder && ['task', 'peek', 'tab', 'node', 'edit', 'mode', 'openTask', 'action', 'unblock', 'createPr', 'postReview', 'open'].find(k => held.dataset?.[k] !== undefined);
     render();
     if (key && !document.contains(held)) holder.querySelector(`[data-${key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)}="${CSS.escape(held.dataset[key])}"]`)?.focus({ preventScroll: true });
     if (!hashReady) { hashReady = true; if (location.hash.length > 1) applyHash(); else syncHash(); }
     if (view === 'github') { if (gh) loadGithub(); else renderGithub(); }
     if (view === 'workflow' && !workflow.busy()) workflow.open();
   };
+  addEventListener('focusout', () => { if (paused) setTimeout(refresh, 0); });
+  $('detail').addEventListener('toggle', () => { if (paused) refresh(); }, true);
+  for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('close', () => { if (paused) refresh(); });
   function refresh() {
     const script = document.createElement('script'); script.src = `board-data.js?t=${Date.now()}`;
     script.onload = () => script.remove();
@@ -872,7 +890,7 @@
     document.body.appendChild(script);
   }
   // Asks in the app's own dialog; "run" happens only on Confirm.
-  const ask = (title, text, run) => { pending = { run }; $('action-title').textContent = title; $('action-text').textContent = text; $('action-dialog').showModal(); };
+  const ask = (title, text, run) => { pending = { run }; $('action-title').textContent = title; $('action-text').textContent = text; openAction(); };
   const workflow = mountWorkflow({ $, escape, post, served, notice, ask, projects: () => data.projects });
   $('open-help').onclick = () => $('help-dialog').showModal();
   $('activity').onclick = e => { const open = e.target.closest('[data-open-task]'); if (open) openTask(open.dataset.openTask); };
@@ -899,8 +917,8 @@
       b: () => { show('work'); queueMode = 'board'; applyQueueMode(); syncHash(); },
       l: () => { show('work'); queueMode = 'list'; applyQueueMode(); syncHash(); },
       '/': () => { const box = { github: 'gh-search', projects: 'project-search' }[view]; if (box) return $(box)?.focus(); show('work'); queueMode = 'list'; applyQueueMode(); $('search').focus(); },
-      a: () => document.querySelector('#work:not([hidden]) [data-action=approve], #drawer:not([hidden]) [data-action=approve]')?.click(),
-      r: () => document.querySelector('#work:not([hidden]) [data-action=reject], #drawer:not([hidden]) [data-action=reject]')?.click(),
+      a: () => document.querySelector('#work:not([hidden]) [data-action=approve]')?.click(),
+      r: () => document.querySelector('#work:not([hidden]) [data-action=reject]')?.click(),
     };
     if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
   });
