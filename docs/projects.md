@@ -19,7 +19,7 @@ The defaults are read from files, not run. A placeholder `test` script, a suite 
 
 ## Editing in the board
 
-The Projects page of `factory board` edits a registered project: base branch, install command and gates. It also registers the repositories setup would find, and removes a project.
+The Projects page of `factory board` edits a registered project: base branch, install command, gates, and what an agent the board runs may do in it. It also registers the repositories setup would find, and removes a project.
 
 - The base branch must exist as `origin/<branch>` in the local repository. Run `git fetch origin <branch>` first when it does not. A base branch other than `origin/HEAD` is stored with `allowBaseMismatch`, so `factory doctor` does not report it.
 - A gate name uses lowercase letters, digits and hyphens, is unique in the project, and is not `install`, `reproduce` or `regress`.
@@ -27,6 +27,7 @@ The Projects page of `factory board` edits a registered project: base branch, in
 - Changing a gate's command makes its earlier runs `stale` on tasks in flight. Run the gate again with `factory run <id> <gate>`.
 - Removing a project is refused while one of its tasks is in flight. The repository folder and the recorded task history stay.
 - "Add a project by its folder" registers a repository anywhere on the machine: type its folder (`~` works), check the suggested commands, and save. The folder must be the root of a cloned Git repository with a GitHub origin. A project outside the workspace is stored with its full path. On a teammate's machine an imported setup looks for it in their workspace first; when it is not there, its shared settings wait and apply when they add it from wherever they keep it.
+- "Agents the board runs" in the project dialog sets the project's own permission mode and extra allowed commands. They are stored under `agent` in the entry, stay on this machine, and are described in [Running an agent from the board](workflow.md#agent-settings).
 - The header shows the workspace folder.
 
 Other fields (`remote`, `dir`, `prBody`, branch conventions) are edited in `repos.json`.

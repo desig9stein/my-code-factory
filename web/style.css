@@ -419,3 +419,6 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark a:hover,#factory-dark button.fd-link:hover,#factory-dark button.fd-textlink:hover{text-decoration-color:var(--fd-fg)}
 #factory-dark #notice{color:var(--fd-fg)}
 #factory-dark .fd-energy-label,#factory-dark .fd-combo-group,#factory-dark .fd-effect dt,#factory-dark p.fd-done>span:first-child{color:var(--fd-muted)}
+#factory-dark .fd-agents{max-width:1100px;margin-top:4px}#factory-dark .fd-agents>.fd-check{flex:1 1 100%;color:var(--fd-fg);font-size:14px}#factory-dark #agents-error{flex-basis:100%;margin:0;font-size:14px}#factory-dark #agents-error:empty{display:none}
+#factory-dark .fd-agent-modes{margin:8px 0 0;max-width:86ch;font-size:14px}#factory-dark .fd-agent-modes dt{font-weight:600;margin-top:10px;color:var(--fd-fg)}#factory-dark .fd-agent-modes dd{margin:2px 0 0;color:var(--fd-muted)}
+#factory-dark #project-agent textarea{font:13px/1.5 ui-monospace,SFMono-Regular,monospace;resize:vertical}#factory-dark #project-agent[hidden]{display:none}
