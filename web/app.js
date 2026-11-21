@@ -7,7 +7,7 @@
   const compact = (value) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
   const labels = { input: 'Input · uncached', cacheWrite: 'Cache write', cacheRead: 'Cache read', output: 'Output' };
   const served = Boolean(window.__factoryToken);
-  let data = { issues: [], projects: [] }, peek = null, lost = false, selected = null, tab = 'overview', view = 'work', scope = 'task', query = '', pending = null;
+  let data = { issues: [], projects: [] }, peek = null, lost = false, selected = null, tab = '', shownTab = 'details', view = 'work', scope = 'task', query = '', pending = null;
   let rates = { ...DEFAULT_ASSUMPTIONS }, object = 'bulb';
   let report = null, reportDay = '', reportPlain = '', reportBusy = false;
   let setup = null, agentsInfo = null, editing = null, gh = null, ghError = '', ghLoading = false, ghRepo = '', ghQuery = '', projectQuery = '';
@@ -27,6 +27,16 @@
     box.setAttribute('role', problem ? 'alert' : 'status');
     box.innerHTML = message ? `<span>${problem ? 'Problem: ' : ''}${escape(message)}${link ? ` ${externalLink(link.url, link.text)}` : ''}</span><button type="button" class="fd-link" id="notice-close">Dismiss</button>` : '';
   };
+  // Explanations are one switch for every page: off shows status and actions only, on adds the sentences that explain them.
+  let explaining = false;
+  try { explaining = localStorage.getItem('factory-explain') === 'on'; } catch { /* The choice lasts for this visit only. */ }
+  const applyExplain = () => { document.body.classList.toggle('fd-explain-on', explaining); $('explain').setAttribute('aria-pressed', explaining); };
+  $('explain').onclick = () => { explaining = !explaining; try { localStorage.setItem('factory-explain', explaining ? 'on' : 'off'); } catch { /* Kept for this visit. */ } applyExplain(); };
+  applyExplain();
+  // Sections of a task that open on demand stay open across data loads.
+  const openFolds = new Set();
+  const fold = (key, title, body, open = false) => { const id = `${selected}:${key}`; return `<details class="fd-fold fd-keep" data-fold="${escape(key)}"${openFolds.has(id) || (open && !openFolds.has(`${id}:closed`)) ? ' open' : ''}><summary>${title}</summary><div class="fd-fold-body">${body}</div></details>`; };
+  document.addEventListener('toggle', e => { const key = e.target.dataset?.fold; if (!key || !selected) return; const id = `${selected}:${key}`; if (e.target.open) { openFolds.add(id); openFolds.delete(`${id}:closed`); } else { openFolds.delete(id); openFolds.add(`${id}:closed`); } }, true);
   $('notice').onclick = e => { if (e.target.id === 'notice-close') notice(''); };
   // Mirrors TITLES in lib/workflow.mjs, for places that only have a stage key.
   const STEP_NAMES = { gates: 'checks', ready: 'your review', approved: 'open the PR', 'pr-opened': 'PR opened' };
@@ -41,16 +51,17 @@
   function show(next) {
     view = next;
     document.querySelectorAll('.fd-nav [data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-    $('view-title').hidden = view !== 'work';
+    // The work queue has its own bar with the layout switch and New task; every other page starts with its own heading.
+    $('toolbar').hidden = view !== 'work';
     syncHash();
-    ['work', 'github', 'report', 'map', 'projects', 'workflow', 'activity', 'metrics'].forEach(id => { $(id).hidden = id !== view; });
+    ['work', 'github', 'report', 'map', 'projects', 'workflow', 'activity', 'metrics', 'settings'].forEach(id => { $(id).hidden = id !== view; });
     applyQueueMode();
-    if (view === 'projects') loadSetup();
+    if (view === 'projects' || view === 'settings') loadSetup();
     if (view === 'workflow') workflow.open();
     if (view === 'report' && !report) loadReport();
     if (view === 'github' && !gh && !ghLoading) loadGithub();
   }
-  function checklist() {
+  function checklist(full = false) {
     if (!served) return '';
     if (!setup) return '<p class="fd-caption">Checking setup…</p>';
     const row = (ok, text, fix) => `<li><span class="${ok ? 'fd-pass' : 'fd-warning'}">${ok ? '✓' : '!'}</span> ${escape(text)}${ok || !fix ? '' : `<br><span class="fd-caption">${escape(fix)}</span>`}</li>`;
@@ -60,7 +71,18 @@
       [!bare.length, bare.length ? `No check configured: ${bare.join(', ')}` : 'Every project has a check', 'Open Projects and use Edit to add one.'],
       [setup.hooksInstalled, 'Claude Code guard hooks', 'Optional. Run "factory hooks --install" in your terminal.']];
     const open = rows.filter(([ok]) => !ok).length;
-    return `<details class="fd-setup" ${open ? 'open' : ''}><summary>Setup · ${open ? `${open} item(s) to look at` : 'all checks pass'}</summary><ul class="fd-checks">${rows.map(r => row(...r)).join('')}</ul><p class="fd-caption">Workspace <code>${escape(setup.workspace)}</code> · data <code>${escape(setup.root)}</code></p></details>`;
+    // Elsewhere than on Settings the list appears only when something needs the user.
+    if (!full && !open) return '';
+    return `<details class="fd-setup" ${open || full ? 'open' : ''}><summary>Setup · ${open ? `${open} item(s) to look at` : 'all checks pass'}</summary><ul class="fd-checks">${rows.map(r => row(...r)).join('')}</ul><p class="fd-caption">Workspace <code>${escape(setup.workspace)}</code> · data <code>${escape(setup.root)}</code></p></details>`;
+  }
+  // Marks Settings in the navigation when a setup check fails, so the list itself need not sit on every page.
+  function setupAttention() {
+    const failing = setup ? setup.checks.filter(c => !c.ok).length + (setup.hooksInstalled ? 0 : 1) : 0;
+    const button = document.querySelector('.fd-nav [data-view="settings"]');
+    button.innerHTML = `Settings${failing ? ` <span class="fd-attn" title="${failing} setup item(s) to look at">${failing}</span>` : ''}`;
+  }
+  function renderSettings() {
+    $('settings').innerHTML = `<header class="fd-page-head"><div><h2 class="fd-h1">Settings</h2><p class="fd-desc">Settings of this machine: the tools Codeignite needs and the agents the board runs. They are not part of the team export.</p></div></header>${checklist(true)}${agentsSection()}`;
   }
   async function loadSetup() {
     if (!served) return;
@@ -72,8 +94,9 @@
       const agents = await fetch('/api/agents');
       if (agents.ok) agentsInfo = await agents.json();
     } catch (error) { notice(error.message, true); return; }
+    setupAttention();
     if (document.querySelector('dialog[open]')) return;
-    renderProjects();
+    renderProjects(); renderSettings();
     if (!task()) renderDetail();
   }
   const doc = (title, content) => `<section><h3>${escape(title)}</h3>${content ? `<pre>${escape(content)}</pre>` : '<p class="fd-caption">Not recorded yet.</p>'}</section>`;
@@ -153,14 +176,14 @@
   function agentActivity(i) {
     const a = i.activity;
     const rows = a.byStage.map(s => { const at = s.stage === i.stage, ms = (s.ms || 0) + (s.since ? Date.now() - new Date(s.since).getTime() : 0), visited = s.ms !== null || s.since; return `<div class="fd-stage${at ? ' fd-stage-now' : ''}${visited ? '' : ' fd-stage-todo'}"><div class="fd-stage-name">${escape(s.stage.replaceAll('-', ' '))}<small>${visited ? `${span(ms)}${at ? ' · now' : ''}` : ''}</small></div><div>${s.items.length ? `<div class="fd-achips">${s.items.map(actChip).join('')}</div>` : `<span class="fd-muted">${visited ? 'No calls recorded' : 'Not started'}</span>`}</div></div>`; }).join('');
-    return `<div class="fd-anow${isActive(i) ? ' fd-anow-on' : ''}"><div class="fd-live" data-live="${escape(i.id)}">${liveInner(i)}</div><span class="fd-muted">In this step for ${agoShort(i.stageSince)} · ${a.recorded ? `${number(a.calls)} recorded call${a.calls === 1 ? '' : 's'}` : 'no hook has reported on this task'}</span></div><h3 class="fd-gap">Agent activity by step</h3>${rows}<p class="fd-caption">Tool names and counts come from the session hooks of a supported harness. Command text beyond the program name, file paths and file contents are not stored. A call counts for this task when it runs inside the task worktree or names the task. No recorded activity means unknown, not idle.</p>`;
+    return `<div class="fd-anow${isActive(i) ? ' fd-anow-on' : ''}"><div class="fd-live" data-live="${escape(i.id)}">${liveInner(i)}</div><span class="fd-muted">In this step for ${agoShort(i.stageSince)} · ${a.recorded ? `${number(a.calls)} recorded call${a.calls === 1 ? '' : 's'}` : 'no hook has reported on this task'}</span></div><h3 class="fd-gap">Agent activity by step</h3>${rows}<p class="fd-caption fd-explain">Tool names and counts come from the session hooks of a supported harness. Command text beyond the program name, file paths and file contents are not stored. A call counts for this task when it runs inside the task worktree or names the task. No recorded activity means unknown, not idle.</p>`;
   }
   function renderDrawer() {
     const i = data.issues.find(x => x.id === peek);
     $('drawer').hidden = !i; $('board').classList.toggle('fd-board-open', Boolean(i));
     if (!i) { showPane('list'); return; }
     // The drawer leads with what to do, the same panel the task page shows; the agent's activity is one click below.
-    $('drawer').innerHTML = `<button class="fd-btn fd-back" data-close>← Board</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}</p><h2 class="fd-h1">${escape(i.title)}</h2>${nowPanel(i, true)}<div class="fd-actions"><button class="fd-btn" data-open="overview">Open the task</button><button class="fd-btn" data-open="changes">Read the changes</button><button class="fd-btn fd-ghost fd-drawer-close" data-close>Close</button></div><details class="fd-more fd-keep"><summary>What the agent did, step by step</summary>${i.activity ? agentActivity(i) : '<p class="fd-caption">No activity recorded.</p>'}</details>`;
+    $('drawer').innerHTML = `<button class="fd-btn fd-back" data-close>← Board</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}</p><h2 class="fd-h1">${escape(i.title)}</h2>${nowPanel(i, true)}<div class="fd-actions">${i.stage === 'ready' && !i.blocked ? '' : '<button class="fd-btn" data-open="">Open the task</button>'}<button class="fd-btn fd-ghost fd-drawer-close" data-close>Close</button></div><details class="fd-more fd-keep"><summary>What the agent did, step by step</summary>${i.activity ? agentActivity(i) : '<p class="fd-caption">No activity recorded.</p>'}</details>`;
   }
   // Keeps "3 s ago" and the working marker current between data loads, without redrawing cards.
   function tick() {
@@ -187,20 +210,20 @@
     const log = r?.log ? `<a class="fd-btn" href="/${escape(r.log)}" target="_blank" rel="noopener" data-agent-log>Open the log</a>` : '';
     const own = (summary) => `<details class="fd-launch-more"><summary>${summary}</summary>${manual}</details>`;
     if (r?.status === 'running') {
-      return `<p class="fd-now-live"><span class="fd-dot"></span>Codeignite is running ${tool} on this task: session ${r.sessions || 1}${r.stage ? `, step "${escape(stepName(r.stage, i.id))}"` : ''}${r.model ? `, model ${escape(r.model)}` : ''}. Started ${agoShort(r.startedAt)} ago.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Stop the agent</button>${log}</div><p class="fd-caption">It works step by step and stops by itself when the task needs you. Stopping interrupts the session; committed work stays.</p>`;
+      return `<p class="fd-now-live"><span class="fd-dot"></span>Codeignite is running ${tool} on this task: session ${r.sessions || 1}${r.stage ? `, step "${escape(stepName(r.stage, i.id))}"` : ''}${r.model ? `, model ${escape(r.model)}` : ''}. Started ${agoShort(r.startedAt)} ago.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Stop the agent</button>${log}</div><p class="fd-caption fd-explain">It works step by step and stops by itself when the task needs you. Stopping interrupts the session; committed work stays.</p>`;
     }
     if (r?.status === 'queued') {
-      return `<p class="fd-now-live"><span class="fd-idle"></span>Waiting for a free slot. At most ${number(data.agents?.maxConcurrent || 1)} agent${data.agents?.maxConcurrent === 1 ? ' runs' : 's run'} at once; change it under Projects.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Take it out of the queue</button></div>`;
+      return `<p class="fd-now-live"><span class="fd-idle"></span>Waiting for a free slot. At most ${number(data.agents?.maxConcurrent || 1)} agent${data.agents?.maxConcurrent === 1 ? ' runs' : 's run'} at once; change it under Settings.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Take it out of the queue</button></div>`;
     }
     const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit'].includes(r.reason);
     const last = r ? `<p class="${failed ? 'fd-warning' : 'fd-caption'}">The last run ended ${r.endedAt ? `${agoShort(r.endedAt)} ago` : 'without a record of when'} after ${plural(r.sessions, 'session')}: ${escape(r.detail || 'no reason was recorded.')}</p>${r.denials?.length && !/Refused commands/.test(r.detail || '') ? `<p class="fd-caption">Refused commands: ${r.denials.map(d => `<code>${escape(d)}</code>`).join(', ')}. If the agent needs one, allow it for this project under Projects, Edit.</p>` : ''}${r.limit ? `<p class="fd-warning">Your account's usage limit answered "${escape(r.limit.status)}"${r.limit.resetsAt ? `; it resets ${escape(new Date(r.limit.resetsAt).toLocaleString())}` : ''}.</p>` : ''}${r.said ? `<details class="fd-launch-more"><summary>The agent's last message</summary><pre class="fd-now-doc">${escape(r.said)}</pre></details>` : ''}` : '';
     const mode = data.projects.find(p => p.key === i.repo)?.agent?.permission || data.agents?.permission || '';
-    return `${last}<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-run-agent>${r ? 'Run the agent again' : 'Run agent'}</button>${log}</div><p class="fd-caption">Starts ${escape(data.agents?.label || 'your coding agent')} in the background with your own login, one fresh session per step, until the task needs you.${mode ? ` Permission mode: ${escape(data.agents?.modes?.[mode] || mode)}.` : ''} Change the mode and the limits under Projects.</p>${own('Or open a session yourself')}`;
+    return `${last}<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-run-agent>${r ? 'Run the agent again' : 'Run agent'}</button>${log}</div><p class="fd-caption fd-explain">Starts ${escape(data.agents?.label || 'your coding agent')} in the background with your own login, one fresh session per step, until the task needs you.${mode ? ` Permission mode: ${escape(data.agents?.modes?.[mode] || mode)}.` : ''} Change the mode and the limits under Settings.</p>${own('Or open a session yourself')}`;
   }
   const canDecide = (i) => Boolean(served && i.stage === 'ready' && !i.blocked && i.approvalKey);
   // Keeps the decision and its commit on screen while the user reads the task.
   const decideBar = (i) => canDecide(i) ? `<footer class="fd-footer" aria-label="Your decision"><div class="fd-actions"><button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button><span class="fd-branch">commit ${escape((i.head || '').slice(0, 12))}</span></div></footer>` : '';
-  const archiveBlock = () => served ? '<section class="fd-archive"><h3>Archive</h3><p class="fd-caption">Archiving hides the task and removes its worktree. The branch and the recorded evidence are kept.</p><button class="fd-btn" data-action="archive">Archive task</button></section>' : '';
+  const archiveBlock = () => served ? '<section class="fd-archive"><h3>Archive</h3><p class="fd-caption fd-explain">Archiving hides the task and removes its worktree. The branch and the recorded evidence are kept.</p><button class="fd-btn" data-action="archive">Archive task</button></section>' : '';
   // Says what is happening with the task and what the user can do about it, in one panel.
   function nowPanel(i, inDrawer = false) {
     const lead = { you: 'Your turn: ', agent: '', done: '' };
@@ -208,20 +231,20 @@
     const name = escape(i.stageTitle || i.stage);
     if (i.blocked && i.blockedKind === 'unclear') {
       const posted = i.questionsPosted ? `<p class="fd-pass">You posted these on the issue${i.questionsPosted.url ? `: ${externalLink(i.questionsPosted.url, 'open the comment')}` : ''}. When the answer arrives, put it below so the agent can continue.</p>` : '';
-      return panel('you', 'the agent has questions before it starts', `<p>It read the issue and the code and found the issue unclear, so it stopped and wrote the questions below. Nothing was posted or changed.</p><pre class="fd-now-doc">${escape(i.docs.questions || 'The questions file is missing.')}</pre>${posted}<p>Choose what to do:</p><div class="fd-actions">${served ? `<button class="fd-btn fd-primary" type="button" data-unblock="answer">Answer here and continue</button>${i.questionsPosted ? '' : '<button class="fd-btn" type="button" data-post-questions>Post the questions on the issue</button>'}<button class="fd-btn" type="button" data-unblock="skip">Continue without answering</button>` : ''}<button class="fd-btn fd-ghost" type="button" data-copy-doc="questions">Copy the questions</button></div><p class="fd-caption">Answering sends your text to the agent, which reads it and judges the issue again. Posting puts the questions on GitHub under your name and keeps the task waiting. The reasoning behind the questions is under Task brief, Triage.</p>`);
+      return panel('you', 'the agent has questions before it starts', `<p>It read the issue and the code and found the issue unclear, so it stopped and wrote the questions below. Nothing was posted or changed.</p><pre class="fd-now-doc">${escape(i.docs.questions || 'The questions file is missing.')}</pre>${posted}<p>Choose what to do:</p><div class="fd-actions">${served ? `<button class="fd-btn fd-primary" type="button" data-unblock="answer">Answer here and continue</button>${i.questionsPosted ? '' : '<button class="fd-btn" type="button" data-post-questions>Post the questions on the issue</button>'}<button class="fd-btn" type="button" data-unblock="skip">Continue without answering</button>` : ''}<button class="fd-btn fd-ghost" type="button" data-copy-doc="questions">Copy the questions</button></div><p class="fd-caption fd-explain">Answering sends your text to the agent, which reads it and judges the issue again. Posting puts the questions on GitHub under your name and keeps the task waiting. The reasoning behind the questions is under Details, Triage.</p>`);
     }
     if (i.blocked) {
       const attempts = i.blockedKind === 'attempts';
-      return panel('you', attempts ? 'the agent kept failing at this step and stopped' : 'this task is paused', `<p>${escape(i.blocked)}</p>${attempts ? '<p>Look at the failed runs under <button class="fd-link" type="button" data-tab="evidence">Evidence</button>. If a check command itself is wrong, fix it under Projects. Then let the agent try again, with a hint if you have one.</p>' : ''}<div class="fd-actions">${served ? `<button class="fd-btn fd-primary" type="button" data-unblock="note">${attempts ? 'Let it try again' : 'Resume the task'}</button>` : ''}</div>`);
+      return panel('you', attempts ? 'the agent kept failing at this step and stopped' : 'this task is paused', `<p>${escape(i.blocked)}</p>${attempts ? '<p>Look at the failed runs under <button class="fd-link" type="button" data-tab="proof">Proof</button>. If a check command itself is wrong, fix it under Projects. Then let the agent try again, with a hint if you have one.</p>' : ''}<div class="fd-actions">${served ? `<button class="fd-btn fd-primary" type="button" data-unblock="note">${attempts ? 'Let it try again' : 'Resume the task'}</button>` : ''}</div>`);
     }
     if (i.stage === 'ready') {
-      return panel('you', i.kind === 'review' ? 'read the review draft, then decide' : 'review the change, then decide', `<p>The checks passed${i.kind === 'review' ? '' : ' and the verifier agreed'}. Read <button class="fd-link" type="button" data-tab="${i.kind === 'review' ? 'review' : 'changes'}">${i.kind === 'review' ? 'the draft' : 'the changes'}</button>, <button class="fd-link" type="button" data-tab="evidence">the evidence</button> and <button class="fd-link" type="button" data-tab="brief">the PR description</button>. Approving lets the agent ${i.kind === 'review' ? 'post this review' : 'push and open the pull request'}. Sending back returns it to the agent with your reason.</p>${inDrawer ? `<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-open="${i.kind === 'review' ? 'review' : 'changes'}">Review and decide</button></div><p class="fd-caption">You approve or send back on the task page, where the changes, the evidence and the description are on screen.</p>` : `<p class="fd-caption">${canDecide(i) ? 'Approve or send back in the bar at the bottom of this page. ' : ''}Approval covers the commit and the text shown here. It does not push, merge or post by itself.</p>`}`);
+      return panel('you', i.kind === 'review' ? 'read the review draft, then decide' : 'review the change, then decide', `<p>The checks passed${i.kind === 'review' ? '' : ' and the verifier agreed'}. Read <button class="fd-link" type="button" data-tab="review">${i.kind === 'review' ? 'the draft' : 'the changes and the PR description'}</button> and <button class="fd-link" type="button" data-tab="proof">the proof</button>. Approving lets the agent ${i.kind === 'review' ? 'post this review' : 'push and open the pull request'}. Sending back returns it to the agent with your reason.</p>${inDrawer ? `<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-open="review">Review and decide</button></div><p class="fd-caption fd-explain">You approve or send back on the task page, where the changes, the evidence and the description are on screen.</p>` : `<p class="fd-caption fd-explain">${canDecide(i) ? 'Approve or send back in the bar at the bottom of this page. ' : ''}Approval covers the commit and the text shown here. It does not push, merge or post by itself.</p>`}`);
     }
     if (i.stage === 'approved' && i.kind === 'review') {
-      return panel('you', 'you approved this review, now post it', `<p>Nothing has been posted yet.</p><div class="fd-actions">${served ? '<button class="fd-btn fd-primary" type="button" data-post-review>Post the review</button>' : ''}</div><p class="fd-caption">Posts the approved draft on the pull request with its verdict, under your GitHub name.</p>`);
+      return panel('you', 'you approved this review, now post it', `<p>Nothing has been posted yet.</p><div class="fd-actions">${served ? '<button class="fd-btn fd-primary" type="button" data-post-review>Post the review</button>' : ''}</div><p class="fd-caption fd-explain">Posts the approved draft on the pull request with its verdict, under your GitHub name.</p>`);
     }
     if (i.stage === 'pr-opened' || i.stage === 'posted') {
-      return panel('done', i.stage === 'posted' ? 'The review is posted' : 'The pull request is open', `<p>${i.changes ? `${plural(i.changes.files, 'file')} changed, every check passed${i.verdict === 'pass' ? ' and the verifier agreed' : ''}. ` : ''}${i.prUrl ? `${externalLink(i.prUrl, 'Open the pull request')}. ` : ''}Nothing more happens here. Archive the task ${i.stage === 'posted' ? 'when you are done with it' : 'once the pull request is merged'}, at the bottom of Overview.</p>`);
+      return panel('done', i.stage === 'posted' ? 'The review is posted' : 'The pull request is open', `<p>${i.changes ? `${plural(i.changes.files, 'file')} changed, every check passed${i.verdict === 'pass' ? ' and the verifier agreed' : ''}. ` : ''}${i.prUrl ? `${externalLink(i.prUrl, 'Open the pull request')}. ` : ''}Archive the task ${i.stage === 'posted' ? 'when you are done with it' : 'once the pull request is merged'}.</p>${served ? '<div class="fd-actions"><button class="fd-btn" type="button" data-action="archive">Archive task</button></div>' : ''}`);
     }
     const missing = (i.missing || []).length ? `<p class="fd-now-label">Before this step is done:</p><ul class="fd-now-list">${i.missing.map(m => `<li>${escape(m)}</li>`).join('')}</ul>` : '<p class="fd-now-label">Nothing is missing for this step. The agent only has to move the task on.</p>';
     const notes = `${i.sentBack ? `<p class="fd-warning">You sent this back: ${escape(i.sentBack)}</p>` : ''}${i.docs.answers ? '<p class="fd-caption">Your answer is waiting for the agent. It reads it when it next works on the task.</p>' : ''}${i.attempts?.failed ? `<p class="fd-caption">${i.attempts.failed} of ${i.attempts.max} failed attempts used at this step.</p>` : ''}`;
@@ -235,8 +258,8 @@
     else agent = `<p class="fd-now-label">${minutes === null ? 'No agent session has worked on this task yet. Start one:' : `No agent is working on this task right now. The last session was active ${minutes < 90 ? `${minutes} min` : `${Math.round(minutes / 60)} h`} ago. Start one to continue:`}</p>${launch(i)}`;
     // Opening the pull request is mechanical once approved, so the board does it; an agent or the user's own hands remain options.
     if (i.stage === 'approved' && i.kind !== 'review') {
-      const own = served ? `<details class="fd-launch-more"><summary>Or open the pull request yourself</summary><p>Push the branch <code>${escape(i.branch)}</code> from <code>${escape(i.worktree)}</code>, open the pull request with the PR description under Task brief, then paste its address here.</p><form id="pr-form" class="fd-locate"><label><span class="sr-only">Address of the pull request</span><input name="url" type="url" required placeholder="https://github.com/owner/repo/pull/123" autocomplete="off"></label><button class="fd-btn" type="submit">Record the pull request</button></form><p id="pr-error" class="fd-failed" role="alert"></p></details>` : '';
-      const create = served ? `<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-create-pr>Create the pull request</button></div><p class="fd-caption">Pushes the branch <code>${escape(i.branch)}</code> and opens the pull request into <code>${escape(i.base)}</code> with the approved description, using your GitHub login.</p>` : '';
+      const own = served ? `<details class="fd-launch-more"><summary>Or open the pull request yourself</summary><p>Push the branch <code>${escape(i.branch)}</code> from <code>${escape(i.worktree)}</code>, open the pull request with the PR description under Review, then paste its address here.</p><form id="pr-form" class="fd-locate"><label><span class="sr-only">Address of the pull request</span><input name="url" type="url" required placeholder="https://github.com/owner/repo/pull/123" autocomplete="off"></label><button class="fd-btn" type="submit">Record the pull request</button></form><p id="pr-error" class="fd-failed" role="alert"></p></details>` : '';
+      const create = served ? `<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-create-pr>Create the pull request</button></div><p class="fd-caption fd-explain">Pushes the branch <code>${escape(i.branch)}</code> and opens the pull request into <code>${escape(i.base)}</code> with the approved description, using your GitHub login.</p>` : '';
       return panel('you', 'you approved this, now create the pull request', `<p>Nothing has been pushed yet.</p>${create}<details class="fd-launch-more"><summary>Or let an agent do it</summary>${agent}</details>${own}`);
     }
     return panel('agent', `The agent is at: ${name}`, `<p>${escape(i.about || 'The agent works on this step.')}</p>${notes}${missing}${runBlock(i, agent)}`);
@@ -254,28 +277,48 @@
       $('detail').innerHTML = `<div class="fd-empty"><h2 class="fd-h1">Your workspace is ready.</h2>${data.projects.length ? '<p>No task is in flight. Pick an issue under GitHub issues, or use New task with an issue or pull request number. Its progress, evidence, and usage will appear here.</p>' : '<p>No project is registered yet. This command checks your tools and registers every GitHub repository in your workspace:</p><pre>factory setup</pre><p>You can also register them one by one on the Projects page.</p>'}${checklist()}</div>`;
       return;
     }
-    const tabs = [['overview', 'Overview'], ['changes', 'Changes'], ['evidence', 'Evidence'], ['agent', 'Agent activity'], ['brief', 'Task brief'], ['usage', 'Usage']];
-    if (i.kind === 'review') tabs.splice(1, 0, ['review', 'Review draft']);
-    if (!tabs.some(([key]) => key === tab)) tab = 'overview';
-    $('detail').innerHTML = `<div class="fd-head"><button class="fd-btn fd-back" data-back>← All tasks</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span class="${queueStatus(i).cls}">${escape(queueStatus(i).text)}</span>${i.tier === 'trivial' ? '<span class="fd-muted">trivial change</span>' : ''}</p><h2 class="fd-h1">${escape(i.title)}</h2><div class="fd-branch">${escape(i.branch)} · ${(i.head || 'worktree missing').slice(0, 12)} · base ${escape(i.base)}</div>${progress(i)}</div>${nowPanel(i)}<div class="fd-tabs" role="tablist" aria-label="Task sections">${tabs.map(([key, title]) => `<button role="tab" id="tab-${key}" data-tab="${key}" aria-selected="${tab === key}" aria-controls="body">${title}</button>`).join('')}</div><div role="tabpanel" aria-labelledby="tab-${tab}" class="fd-body" id="body"></div>${decideBar(i)}`;
-    if (tab === 'usage') renderUsage(i);
-    else if (tab === 'overview') { renderOverview(i); $('body').insertAdjacentHTML('beforeend', archiveBlock()); }
-    else if (tab === 'agent') $('body').innerHTML = i.activity ? agentActivity(i) : '<p class="fd-caption">No activity data for this task.</p>';
-    else if (tab === 'brief') $('body').innerHTML = doc('Next step for the agent', i.brief) + doc('Issue or pull request', i.docs.issue || i.docs.pr) + doc('Triage', i.docs.triage) + doc('Open questions', i.docs.questions) + doc('Plan', i.docs.plan) + doc('PR description', i.docs.prBody);
-    else if (tab === 'review') $('body').innerHTML = doc('Review draft', i.docs.review);
-    else if (tab === 'evidence') renderEvidence(i);
-    else renderChanges(i);
+    // Three tabs: what you approve, what proves it, and everything else. Old addresses still open the right one.
+    const TAB_ALIAS = { overview: '', changes: 'review', brief: 'details', agent: 'details', usage: 'details', evidence: 'proof' };
+    if (tab in TAB_ALIAS) tab = TAB_ALIAS[tab];
+    const tabs = [['review', i.kind === 'review' ? 'Review draft' : 'Review'], ['proof', 'Proof'], ['details', 'Details']];
+    if (!tabs.some(([key]) => key === tab)) tab = '';
+    // Without a choice the tab follows the step: the change at your review, the proof while checks run, the task itself before that.
+    shownTab = tab || (['ready', 'approved'].includes(i.stage) ? 'review' : ['pr-opened', 'posted'].includes(i.stage) || !i.evidence.length ? 'details' : 'proof');
+    $('detail').innerHTML = `<div class="fd-head"><button class="fd-btn fd-back" data-back>← All tasks</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}<span class="${queueStatus(i).cls}">${escape(queueStatus(i).text)}</span>${i.tier === 'trivial' ? '<span class="fd-muted">trivial change</span>' : ''}</p><h2 class="fd-h1">${escape(i.title)}</h2>${progress(i)}</div>${nowPanel(i)}<div class="fd-tabs" role="tablist" aria-label="Task sections">${tabs.map(([key, title]) => `<button role="tab" id="tab-${key}" data-tab="${key}" aria-selected="${shownTab === key}" aria-controls="body">${title}</button>`).join('')}</div><div role="tabpanel" aria-labelledby="tab-${shownTab}" class="fd-body" id="body"></div>${decideBar(i)}`;
+    if (shownTab === 'review') renderReview(i);
+    else if (shownTab === 'proof') renderEvidence(i);
+    else renderDetails(i);
+  }
+  // Who a change reaches, from the workspace map and the plan.
+  function reachBlock(i) {
+    const direct = i.reach.filter(r => r.depth === 1), missing = direct.filter(r => !r.mentioned);
+    return !i.reach.length ? '' : `<section><h3>Who this change reaches</h3><p><strong>${escape(i.repo)}</strong> is used by ${plural(direct.length, 'project')} directly${i.reach.length > direct.length ? `, and reaches ${number(i.reach.length - direct.length)} more through them` : ''}. ${!i.hasPlan ? 'The plan should say what happens to each direct user under “Consumer impact”.' : missing.length ? `<span class="fd-fail">The plan’s “Consumer impact” does not name ${escape(names(missing.map(r => r.key)))}.</span> Add what happens to ${missing.length === 1 ? 'it' : 'them'}, or why ${missing.length === 1 ? 'it is' : 'they are'} unaffected.` : 'The plan names every direct user.'}</p><div class="fd-evidence">${i.reach.map(r => `<div><span>${escape(r.key)} <span class="fd-muted">· ${r.depth === 1 ? 'direct user' : `through ${escape(r.via)}`}</span></span><span>${r.mentioned ? '<span class="fd-pass">✓ named in the plan</span>' : !i.hasPlan ? '<span class="fd-muted">plan not written yet</span>' : r.depth === 1 ? '<span class="fd-fail">✕ not named in the plan</span>' : '<span class="fd-muted">not named · indirect</span>'}</span></div>`).join('')}</div><p class="fd-caption fd-explain">This is a reminder, not a gate: the task can advance without it.</p><button class="fd-btn" data-show-map="${escape(i.repo)}">Show on the map</button></section>`;
+  }
+  const reachProblem = (i) => i.hasPlan && i.reach.some(r => r.depth === 1 && !r.mentioned);
+  // Review: the text and the change an approval covers. The text is open while the decision is yours.
+  function renderReview(i) {
+    const draft = i.kind === 'review' ? i.docs.review : i.docs.prBody;
+    const title = i.kind === 'review' ? 'Review draft' : 'PR description';
+    const text = draft ? fold('draft', `${title}${i.stage === 'ready' ? ' this approval covers' : ''}`, `<pre class="fd-draft">${escape(draft)}</pre>`, i.stage === 'ready') : `<p class="fd-muted">${title}: not written yet.</p>`;
+    $('body').innerHTML = `${reachProblem(i) ? reachBlock(i) : ''}${text}<h3 class="fd-gap">Changes</h3><div id="diff"></div>`;
+    renderChanges(i);
+  }
+  // Details: what the task is and what happened to it, each part opened on demand.
+  function renderDetails(i) {
+    const part = (key, title, content, open = false) => content ? fold(key, title, `<pre>${escape(content)}</pre>`, open) : '';
+    const first = !i.docs.triage && !i.docs.plan;
+    $('body').innerHTML = `${part('issue', i.kind === 'review' ? 'Pull request' : 'Issue', i.docs.issue || i.docs.pr, first)}${part('triage', 'Triage', i.docs.triage)}${part('questions', 'Open questions', i.docs.questions)}${part('plan', 'Plan', i.docs.plan)}${part('next', 'What the agent is told at this step', i.brief)}${i.reach.length && !reachProblem(i) ? fold('reach', 'Who this change reaches', reachBlock(i)) : ''}${fold('activity', 'What the agent did, step by step', i.activity ? agentActivity(i) : '<p class="fd-caption">No activity data for this task.</p>')}${fold('usage', 'Tokens and footprint', '<div id="usage-box"></div>')}${fold('where', 'Branch and folders', `<div class="fd-evidence"><div><span>Branch</span><span><code>${escape(i.branch)}</code></span></div><div><span>Base</span><span><code>${escape(i.base)}</code></span></div><div><span>Commit</span><span><code>${escape((i.head || 'worktree missing').slice(0, 12))}</code></span></div><div><span>Worktree</span><span><code>${escape(i.worktree || '')}</code></span></div></div>`)}${archiveBlock()}`;
+    renderUsage(i);
   }
   const checksTable = (i) => `<div class="fd-evidence">${i.gates.map(g => `<div><span>${escape(g.name)}</span><span>${check(g.status)}${g.verifier ? ` · verifier ${check(g.verifier)}` : ''}</span></div>`).join('') || '<p>No gates configured for this project.</p>'}${i.regress ? `<div><span>Regression proof</span><span>${check(i.regress)}</span></div>` : ''}${i.kind === 'review' ? '' : `<div><span>Verifier verdict</span><span>${i.verdict ? check(i.verdict) : '<span class="fd-muted">not recorded</span>'}</span></div>`}</div>`;
-  function renderOverview(i) {
-    const c = i.changes;
-    const draft = i.kind === 'review' ? i.docs.review : i.docs.prBody;
-    const direct = i.reach.filter(r => r.depth === 1), missing = direct.filter(r => !r.mentioned);
-    const reachBlock = !i.reach.length ? '' : `<section><h3>Who this change reaches</h3><p><strong>${escape(i.repo)}</strong> is used by ${plural(direct.length, 'project')} directly${i.reach.length > direct.length ? `, and reaches ${number(i.reach.length - direct.length)} more through them` : ''}. ${!i.hasPlan ? 'The plan should say what happens to each direct user under “Consumer impact”.' : missing.length ? `<span class="fd-fail">The plan’s “Consumer impact” does not name ${escape(names(missing.map(r => r.key)))}.</span> Add what happens to ${missing.length === 1 ? 'it' : 'them'}, or why ${missing.length === 1 ? 'it is' : 'they are'} unaffected.` : 'The plan names every direct user.'}</p><div class="fd-evidence">${i.reach.map(r => `<div><span>${escape(r.key)} <span class="fd-muted">· ${r.depth === 1 ? 'direct user' : `through ${escape(r.via)}`}</span></span><span>${r.mentioned ? '<span class="fd-pass">✓ named in the plan</span>' : !i.hasPlan ? '<span class="fd-muted">plan not written yet</span>' : r.depth === 1 ? '<span class="fd-fail">✕ not named in the plan</span>' : '<span class="fd-muted">not named · indirect</span>'}</span></div>`).join('')}</div><p class="fd-caption">This is a reminder, not a gate: the task can advance without it.</p><button class="fd-btn" data-show-map="${escape(i.repo)}">Show on the map</button></section>`;
-    $('body').innerHTML = `${reachBlock}${i.criteria.length ? `<section><h3>Acceptance criteria</h3><ul>${i.criteria.map(x => `<li>${escape(x)}</li>`).join('')}</ul><p class="fd-caption">From the plan. The verifier report says how each was checked; read it under Evidence.</p></section>` : ''}<section><h3>Checks at the current commit</h3>${i.tampered.length ? `<p class="fd-fail">Evidence integrity problem: ${escape(i.tampered.join('; '))}</p>` : ''}${checksTable(i)}</section><section><h3>Changes</h3><p>${c ? `${number(c.files)} file${c.files === 1 ? '' : 's'} changed · <span class="fd-pass">+${number(c.additions)}</span> <span class="fd-fail">−${number(c.deletions)}</span> lines against the merge base` : 'Change size unavailable: the worktree is missing.'}</p><button class="fd-btn" data-tab="changes">Read the changes</button></section>${draft ? doc(i.kind === 'review' ? 'Review draft this approval covers' : 'PR description this approval covers', draft) : ''}`;
-  }
   function renderEvidence(i) {
-    $('body').innerHTML = `<h3>Checks at the current commit</h3>${i.tampered.length ? `<p class="fd-fail">Evidence integrity problem: ${escape(i.tampered.join('; '))}</p>` : ''}${checksTable(i)}<h3 class="fd-gap">Recorded runs</h3>${[...i.evidence].reverse().map(r => { const state = r.stale || r.dirty ? 'stale' : r.ok ? 'pass' : 'fail'; return `<details class="fd-run"${r.log && served ? ` data-log="${escape(r.log)}"` : ''}><summary><span>${escape(r.name)}</span><span class="${state === 'stale' ? 'fd-warning' : checkClass(state)}">${state.toUpperCase()}</span><span class="fd-muted">${escape(r.actor)} · ${escape((r.sha || '').slice(0, 8))}</span></summary><p class="fd-caption">${escape(r.startedAt)}${r.durationMs !== null ? ` · ${number(r.durationMs / 1000, 1)} seconds` : ''}${r.exitCode !== null ? ` · exit ${escape(r.exitCode)}${r.expect ? `, expected to ${escape(r.expect)}` : ''}` : ''}</p>${r.cmd ? `<pre>${escape(r.cmd)}</pre>` : ''}${r.text ? `<pre>${escape(r.text)}</pre>` : ''}${r.log ? `<pre class="fd-log" hidden></pre><a class="fd-link" href="${escape(r.log)}" target="_blank" rel="noopener noreferrer">Open the full log</a>` : ''}</details>`; }).join('') || '<p class="fd-caption">No runs recorded yet.</p>'}${doc('Verifier report', i.docs.verify)}`;
+    const stateOf = (r) => r.stale || r.dirty ? 'stale' : r.ok ? 'pass' : 'fail';
+    const runs = [...i.evidence].reverse(), count = (state) => runs.filter(r => stateOf(r) === state).length;
+    // One line says how the runs went; a failed run is open, a passed one is a click away.
+    const summary = !runs.length ? '<p class="fd-muted">No runs recorded yet.</p>' : `<p>${plural(runs.length, 'run')} recorded: <span class="fd-pass">${count('pass')} passed</span>${count('fail') ? `, <span class="fd-fail">${count('fail')} failed</span>` : ''}${count('stale') ? `, <span class="fd-warning">${count('stale')} from an earlier commit</span>` : ''}.</p>`;
+    const run = (r) => { const state = stateOf(r); return `<details class="fd-run"${r.log && served ? ` data-log="${escape(r.log)}"` : ''}><summary><span>${escape(r.name)}</span><span class="${state === 'stale' ? 'fd-warning' : checkClass(state)}">${state.toUpperCase()}</span><span class="fd-muted">${escape(r.actor)} · ${escape((r.sha || '').slice(0, 8))}</span></summary><p class="fd-caption">${escape(r.startedAt)}${r.durationMs !== null ? ` · ${number(r.durationMs / 1000, 1)} seconds` : ''}${r.exitCode !== null ? ` · exit ${escape(r.exitCode)}${r.expect ? `, expected to ${escape(r.expect)}` : ''}` : ''}</p>${r.cmd ? `<pre>${escape(r.cmd)}</pre>` : ''}${r.text ? `<pre>${escape(r.text)}</pre>` : ''}${r.log ? `<pre class="fd-log" hidden></pre><a class="fd-link" href="${escape(r.log)}" target="_blank" rel="noopener noreferrer">Open the full log</a>` : ''}</details>`; };
+    const failed = runs.filter(r => stateOf(r) === 'fail'), rest = runs.filter(r => stateOf(r) !== 'fail');
+    $('body').innerHTML = `<h3>Checks at the current commit</h3>${i.tampered.length ? `<p class="fd-fail">Evidence integrity problem: ${escape(i.tampered.join('; '))}</p>` : ''}${checksTable(i)}${i.criteria.length ? `<h3 class="fd-gap">Acceptance criteria</h3><ul>${i.criteria.map(x => `<li>${escape(x)}</li>`).join('')}</ul><p class="fd-caption fd-explain">From the plan. The verifier report says how each was checked.</p>` : ''}<h3 class="fd-gap">Recorded runs</h3>${summary}${failed.map(run).join('')}${rest.length ? fold('runs', failed.length ? `The other ${plural(rest.length, 'run')}` : 'Every run', rest.map(run).join('')) : ''}${i.docs.verify ? fold('verify', 'Verifier report', `<pre>${escape(i.docs.verify)}</pre>`) : ''}`;
   }
   // Shows the end of a recorded log inside its run the first time the run is opened.
   async function loadLog(details) {
@@ -303,23 +346,23 @@
     return files;
   }
   async function renderChanges(i) {
-    $('body').innerHTML = '<p class="fd-caption">Loading committed changes…</p>';
-    if (!served) { $('body').innerHTML = '<p>Changes are available when running the local server.</p>'; return; }
+    $('diff').innerHTML = '<p class="fd-caption">Loading committed changes…</p>';
+    if (!served) { $('diff').innerHTML = '<p>Changes are available when running the local server.</p>'; return; }
     const id = i.id;
     try {
       const response = await fetch(`/api/diff?id=${encodeURIComponent(id)}`);
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not load changes.');
-      if (selected !== id || tab !== 'changes') return;
+      if (selected !== id || shownTab !== 'review' || !$('diff')) return;
       const files = parseDiff(result.diff || '');
       const total = (key) => files.reduce((n, f) => n + f[key], 0);
-      $('body').innerHTML = !files.length ? '<p>No committed changes against the merge base.</p>' : `<p>${number(files.length)} file${files.length === 1 ? '' : 's'} changed · <span class="fd-pass">+${number(total('add'))}</span> <span class="fd-fail">−${number(total('del'))}</span> lines. Committed changes against the merge base; uncommitted edits are excluded.</p>` + files.map(f => `<details class="fd-diff-file fd-keep"${f.lines.length > 600 ? '' : ' open'}><summary><span class="fd-path">${escape(f.name)}</span><span><span class="fd-pass">+${number(f.add)}</span> <span class="fd-fail">−${number(f.del)}</span></span></summary><div class="fd-diff">${f.lines.map(l => `<div${l.kind ? ` class="${l.kind}"` : ''}>${escape(l.text) || ' '}</div>`).join('')}</div></details>`).join('');
-    } catch (error) { if (selected === id && tab === 'changes') $('body').textContent = error.message; }
+      $('diff').innerHTML = !files.length ? '<p>No committed changes against the merge base.</p>' : `<p>${number(files.length)} file${files.length === 1 ? '' : 's'} changed · <span class="fd-pass">+${number(total('add'))}</span> <span class="fd-fail">−${number(total('del'))}</span> lines. Committed changes against the merge base; uncommitted edits are excluded.</p>` + files.map(f => `<details class="fd-diff-file fd-keep"${f.lines.length > 600 ? '' : ' open'}><summary><span class="fd-path">${escape(f.name)}</span><span><span class="fd-pass">+${number(f.add)}</span> <span class="fd-fail">−${number(f.del)}</span></span></summary><div class="fd-diff">${f.lines.map(l => `<div${l.kind ? ` class="${l.kind}"` : ''}>${escape(l.text) || ' '}</div>`).join('')}</div></details>`).join('');
+    } catch (error) { if (selected === id && shownTab === 'review' && $('diff')) $('diff').textContent = error.message; }
   }
   function scopedUsage(i) { return scope === 'task' ? i.tokens : i.tokens.bySession?.find(session => session.id === scope); }
   function renderUsage(i) {
     if (scope !== 'task' && !i.tokens.bySession?.some(session => session.id === scope)) scope = 'task';
-    $('body').innerHTML = `<h3>Token usage</h3><label>Usage scope<select id="usage-scope"><option value="task">Full task · all linked sessions</option>${(i.tokens.bySession || []).map(session => `<option value="${session.id}" ${scope === session.id ? 'selected' : ''}>${escape(session.label)} · linked ${escape(session.linkedAt || 'date unknown')}</option>`).join('')}</select></label><div id="usage-values"></div><section class="fd-energy"><div id="impact"></div><div class="fd-provenance"><strong>Illustrative scenario, not measured consumption.</strong><br>Energy rates: assumed · Provider grid: unknown</div><p class="fd-caption" id="active-assumptions"></p><label>Compare electricity with<select id="object">${Object.entries(OBJECTS).map(([key, value]) => `<option value="${key}" ${object === key ? 'selected' : ''}>${escape(value.label)}</option>`).join('')}</select></label><details id="method"><summary>How this is calculated</summary><div class="fd-method" id="method-values"></div></details><details><summary>Change assumptions</summary><form id="assumptions"><div class="fd-rates">${TOKEN_KINDS.map(key => `<label>${labels[key]} · Wh per million tokens<input name="${key}" type="number" min="0" max="1000000" step="any" required value="${rates[key]}"></label>`).join('')}<label>Carbon intensity · g CO₂e/kWh<input name="carbonIntensity" type="number" min="0" max="5000" step="any" required value="${rates.carbonIntensity}"></label></div><div class="fd-actions"><button class="fd-btn" type="submit">Apply assumptions</button><button class="fd-btn" type="button" id="reset-assumptions">Reset defaults</button></div><p class="fd-caption">Saved in this browser. Not provider measurements. Last valid assumptions stay active until you apply changes.</p><p id="rate-error" role="alert"></p></form></details></section>`;
+    $('usage-box').innerHTML = `<h3>Token usage</h3><label>Usage scope<select id="usage-scope"><option value="task">Full task · all linked sessions</option>${(i.tokens.bySession || []).map(session => `<option value="${session.id}" ${scope === session.id ? 'selected' : ''}>${escape(session.label)} · linked ${escape(session.linkedAt || 'date unknown')}</option>`).join('')}</select></label><div id="usage-values"></div><section class="fd-energy"><div id="impact"></div><div class="fd-provenance"><strong>Illustrative scenario, not measured consumption.</strong><br>Energy rates: assumed · Provider grid: unknown</div><p class="fd-caption" id="active-assumptions"></p><label>Compare electricity with<select id="object">${Object.entries(OBJECTS).map(([key, value]) => `<option value="${key}" ${object === key ? 'selected' : ''}>${escape(value.label)}</option>`).join('')}</select></label><details id="method"><summary>How this is calculated</summary><div class="fd-method" id="method-values"></div></details><details><summary>Change assumptions</summary><form id="assumptions"><div class="fd-rates">${TOKEN_KINDS.map(key => `<label>${labels[key]} · Wh per million tokens<input name="${key}" type="number" min="0" max="1000000" step="any" required value="${rates[key]}"></label>`).join('')}<label>Carbon intensity · g CO₂e/kWh<input name="carbonIntensity" type="number" min="0" max="5000" step="any" required value="${rates.carbonIntensity}"></label></div><div class="fd-actions"><button class="fd-btn" type="submit">Apply assumptions</button><button class="fd-btn" type="button" id="reset-assumptions">Reset defaults</button></div><p class="fd-caption fd-explain">Saved in this browser. Not provider measurements. Last valid assumptions stay active until you apply changes.</p><p id="rate-error" role="alert"></p></form></details></section>`;
     $('usage-scope').onchange = e => { scope = e.target.value; updateUsage(); };
     $('object').onchange = e => { object = e.target.value; saveAssumptions(); updateUsage(); };
     $('assumptions').onsubmit = e => {
@@ -365,9 +408,9 @@
     const { settings: s, harness: h, limits } = agentsInfo;
     const options = (list, value) => list.map(o => `<option value="${escape(o.id)}"${o.id === value ? ' selected' : ''}>${escape(o.label)}</option>`).join('');
     const explain = (list) => `<dl class="fd-agent-modes">${list.map(o => `<dt>${escape(o.label)}</dt><dd>${escape(o.about)}</dd>`).join('')}</dl>`;
-    return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. ${h.version ? `Found: ${escape(h.version)}.` : `<span class="fd-warning">${escape(h.label)} was not found. ${escape(h.install)}</span>`} These settings stay on this machine and are not part of the team export.</p>
+    return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption fd-explain">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. ${h.version ? `Found: ${escape(h.version)}.` : `<span class="fd-warning">${escape(h.label)} was not found. ${escape(h.install)}</span>`} These settings stay on this machine and are not part of the team export.</p>
 <form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
-<details class="fd-launch-more fd-keep"><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption">A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
+<details class="fd-launch-more fd-keep"><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption fd-explain">A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
   }
   function renderProjectCards() {
     const match = p => `${p.key} ${p.remote}`.toLowerCase().includes(projectQuery.toLowerCase());
@@ -375,13 +418,13 @@
     const found = served && setup ? setup.candidates.map((c, n) => [c, n]).filter(([c]) => match(c)) : [];
     const actions = p => served ? `<button class="fd-btn" data-edit="${escape(p.key)}">Edit</button><button class="fd-btn fd-ghost" data-remove="${escape(p.key)}">Remove</button>` : '';
     $('project-cards').innerHTML = (registered.length ? `<div class="fd-cards">${registered.map(p => projectCard(p, actions(p))).join('')}</div>` : `<p class="fd-blank">${data.projects.length ? 'No project matches this filter.' : 'No project is registered yet.'}</p>`)
-      + (served && setup?.pending?.length ? `<h2 class="fd-section">From your team's setup, not on this machine yet <span>${setup.pending.length}</span></h2><p class="fd-caption">These projects came with an imported setup, but their repository was not found in your workspace. Their shared commands and workflow are kept and apply when you add the project. Clone it into the workspace, or if it is already cloned somewhere else, use "Add a project by its folder" below.</p><ul class="fd-asset-list fd-pending">${setup.pending.map(p => `<li><span class="fd-chip">${escape(p.key)}</span>${externalLink(`https://github.com/${p.remote}`, p.remote)}<code>git clone git@github.com:${escape(p.remote)}.git</code></li>`).join('')}</ul>` : '')
-      + (found.length ? `<h2 class="fd-section">Found in your workspace <span>${found.length}</span></h2><p class="fd-caption">GitHub repositories directly inside the workspace that are not registered. Review the suggested commands before you register one.</p><div class="fd-cards">${found.map(([c, n]) => projectCard(c, `<button class="fd-btn fd-primary" data-register="${n}">Register</button>`, 'fd-card-new')).join('')}</div>` : '');
+      + (served && setup?.pending?.length ? `<h2 class="fd-section">From your team's setup, not on this machine yet <span>${setup.pending.length}</span></h2><p class="fd-caption fd-explain">These projects came with an imported setup, but their repository was not found in your workspace. Their shared commands and workflow are kept and apply when you add the project. Clone it into the workspace, or if it is already cloned somewhere else, use "Add a project by its folder" below.</p><ul class="fd-asset-list fd-pending">${setup.pending.map(p => `<li><span class="fd-chip">${escape(p.key)}</span>${externalLink(`https://github.com/${p.remote}`, p.remote)}<code>git clone git@github.com:${escape(p.remote)}.git</code></li>`).join('')}</ul>` : '')
+      + (found.length ? `<h2 class="fd-section">Found in your workspace <span>${found.length}</span></h2><p class="fd-caption fd-explain">GitHub repositories directly inside the workspace that are not registered. Review the suggested commands before you register one.</p><div class="fd-cards">${found.map(([c, n]) => projectCard(c, `<button class="fd-btn fd-primary" data-register="${n}">Register</button>`, 'fd-card-new')).join('')}</div>` : '');
   }
   function renderProjects() {
     const bare = data.projects.filter(p => !p.gates.length).length;
     const stats = `<span class="fd-stat"><b>${data.projects.length}</b> registered</span>${bare ? `<span class="fd-stat fd-stat-warn"><b>${bare}</b> without a check</span>` : ''}${served && setup?.candidates.length ? `<span class="fd-stat"><b>${setup.candidates.length}</b> not registered</span>` : ''}`;
-    $('projects').innerHTML = `<header class="fd-page-head"><div><h2 class="fd-h1">Projects</h2><p class="fd-desc">Each project supplies its own checks. Settings are saved on this machine; Export shares them with your team.</p></div><div class="fd-stats">${stats}${served ? '<button class="fd-btn" type="button" id="export-config" title="Projects, gates and workflow in one file, without paths or task data">Export for the team</button>' : ''}</div></header>${checklist()}${agentsSection()}<h2 class="fd-section">Registered projects</h2><div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div>${served ? `<h2 class="fd-section">Add a project by its folder</h2><p class="fd-caption">For a repository that is not inside the workspace${data.workspace ? ` (${escape(data.workspace)})` : ''}, or one the list above did not find. It needs to be cloned on this machine and have a GitHub origin.</p><form id="locate-form" class="fd-locate"><label><span class="sr-only">Folder of the repository</span><input name="path" required placeholder="~/code/my-app" autocomplete="off" spellcheck="false"></label><button class="fd-btn" type="submit">Find it</button></form><p id="locate-error" class="fd-failed" role="alert"></p>` : ''}<p class="fd-caption fd-page-foot">Branch conventions and other project rules live in repos.json in your Codeignite data folder.</p>`;
+    $('projects').innerHTML = `<header class="fd-page-head"><div><h2 class="fd-h1">Projects</h2><p class="fd-desc">Each project supplies its own checks. Settings are saved on this machine; Export shares them with your team.</p></div><div class="fd-stats">${stats}${served ? '<button class="fd-btn" type="button" id="export-config" title="Projects, gates and workflow in one file, without paths or task data">Export for the team</button>' : ''}</div></header><div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div>${served ? `<h2 class="fd-section">Add a project by its folder</h2><p class="fd-caption fd-explain">For a repository that is not inside the workspace${data.workspace ? ` (${escape(data.workspace)})` : ''}, or one the list above did not find. It needs to be cloned on this machine and have a GitHub origin.</p><form id="locate-form" class="fd-locate"><label><span class="sr-only">Folder of the repository</span><input name="path" required placeholder="~/code/my-app" autocomplete="off" spellcheck="false"></label><button class="fd-btn" type="submit">Find it</button></form><p id="locate-error" class="fd-failed" role="alert"></p>` : ''}<p class="fd-caption fd-page-foot fd-explain">Branch conventions and other project rules live in repos.json in your Codeignite data folder.</p>`;
     renderProjectCards();
   }
   $('projects').addEventListener('submit', async e => {
@@ -391,7 +434,7 @@
     try { openProject('add', await post('/api/project/locate', { path: e.target.elements.path.value })); }
     catch (error) { $('locate-error').textContent = error.message; }
   });
-  $('projects').addEventListener('submit', async e => {
+  $('settings').addEventListener('submit', async e => {
     if (e.target.id !== 'agents-form') return;
     e.preventDefault();
     const f = e.target.elements;
@@ -428,7 +471,7 @@
       const prs = [...report.pullRequests.opened.map(p => ['opened', p]), ...report.pullRequests.merged.map(p => ['merged', p])];
       const pulls = prs.length ? `<h2 class="fd-section">Pull requests <span>${prs.length}</span></h2><ul class="fd-issues">${prs.map(([what, p]) => `<li class="fd-issue"><div><p class="fd-issue-title">${externalLink(p.url, p.title)}</p><p class="fd-issue-meta"><span class="fd-badge fd-badge-ok">${what}</span><span>${escape(p.repo)}#${escape(p.number)}</span></p></div></li>`).join('')}</ul>` : '';
       const commits = report.commits.length ? `<h2 class="fd-section">Commits <span>${report.commits.reduce((n, c) => n + c.count, 0)}</span></h2>${report.commits.map(c => `<details class="fd-panel fd-general"><summary>${escape(c.project)} · ${c.count}</summary><ul class="fd-asset-list">${c.commits.map(x => `<li><code>${escape(x.sha)}</code><span>${escape(x.subject)}</span></li>`).join('')}</ul></details>`).join('')}` : '';
-      body = `<div class="fd-wf-grid"><section class="fd-panel"><div class="fd-editor-head"><h3>Summary from the records</h3><button class="fd-btn" type="button" data-copy="report-summary">Copy</button></div><pre id="report-summary" class="fd-report">${escape(report.summary)}</pre></section><section class="fd-panel"><div class="fd-editor-head"><h3>In plain English</h3>${reportPlain ? '<button class="fd-btn" type="button" data-copy="report-plain">Copy</button>' : ''}</div>${reportPlain ? `<pre id="report-plain" class="fd-report">${escape(reportPlain)}</pre><p class="fd-caption">Written by Claude from the summary on the left. Check it against the records before you send it.</p><button class="fd-btn" type="button" id="report-write" ${reportBusy ? 'disabled' : ''}>${reportBusy ? 'Writing…' : 'Write it again'}</button>` : `<p class="fd-caption" style="margin-top:12px">Claude Code on this machine can rewrite the summary as a few short sentences for someone who does not read commit messages. It receives only the summary text on the left and has no tools. It takes up to a minute.</p><button class="fd-btn fd-primary" type="button" id="report-write" ${reportBusy ? 'disabled' : ''}>${reportBusy ? 'Writing…' : 'Write it in plain English'}</button>`}<p id="report-error" class="fd-failed" role="alert"></p></section></div>${tasks}${pulls}${commits}${report.pullRequests.error ? `<p class="fd-caption fd-page-foot">${escape(report.pullRequests.error)}</p>` : ''}`;
+      body = `<div class="fd-wf-grid"><section class="fd-panel"><div class="fd-editor-head"><h3>Summary from the records</h3><button class="fd-btn" type="button" data-copy="report-summary">Copy</button></div><pre id="report-summary" class="fd-report">${escape(report.summary)}</pre></section><section class="fd-panel"><div class="fd-editor-head"><h3>In plain English</h3>${reportPlain ? '<button class="fd-btn" type="button" data-copy="report-plain">Copy</button>' : ''}</div>${reportPlain ? `<pre id="report-plain" class="fd-report">${escape(reportPlain)}</pre><p class="fd-caption fd-explain">Written by Claude from the summary on the left. Check it against the records before you send it.</p><button class="fd-btn" type="button" id="report-write" ${reportBusy ? 'disabled' : ''}>${reportBusy ? 'Writing…' : 'Write it again'}</button>` : `<p class="fd-caption fd-explain" style="margin-top:12px">Claude Code on this machine can rewrite the summary as a few short sentences for someone who does not read commit messages. It receives only the summary text on the left and has no tools. It takes up to a minute.</p><button class="fd-btn fd-primary" type="button" id="report-write" ${reportBusy ? 'disabled' : ''}>${reportBusy ? 'Writing…' : 'Write it in plain English'}</button>`}<p id="report-error" class="fd-failed" role="alert"></p></section></div>${tasks}${pulls}${commits}${report.pullRequests.error ? `<p class="fd-caption fd-page-foot">${escape(report.pullRequests.error)}</p>` : ''}`;
     }
     $('report').innerHTML = `<header class="fd-page-head">${head}${controls}</header>${body}`;
   }
@@ -545,7 +588,7 @@
     const f = ghFilter;
     const option = (value, label, current) => `<option value="${escape(value)}" ${value === current ? 'selected' : ''}>${escape(label)}</option>`;
     const state = (value, label) => `<label><input type="radio" name="state" value="${value}" ${f.state === value ? 'checked' : ''}><span>${label}</span></label>`;
-    $('github').innerHTML = `<header class="fd-page-head">${head}<div class="fd-actions"><span class="fd-caption" id="gh-loaded" role="status"></span><button class="fd-btn" type="button" id="gh-refresh">Refresh</button></div></header><form id="gh-filter" class="fd-panel fd-filter"><label>Show issues<select name="who">${WHO.map(([value, label]) => option(value, label, f.who)).join('')}</select></label><label id="gh-login" ${f.who === 'user' ? '' : 'hidden'}>GitHub login<input name="login" value="${escape(f.login)}" placeholder="octocat"></label><fieldset class="fd-seg"><legend>State</legend><div>${state('open', 'Open')}${state('closed', 'Closed')}</div></fieldset><label>Label<input name="label" value="${escape(f.label)}" placeholder="Any label"></label><p class="fd-caption">These choices are saved and reload the list as soon as you change one. The search and the project chips below only narrow what is already loaded.</p></form><div class="fd-bar"><label class="fd-search"><span class="sr-only">Search loaded issues</span><input id="gh-search" type="search" placeholder="Search loaded issues by title, number or label" value="${escape(ghQuery)}"></label></div><div id="gh-results"></div>`;
+    $('github').innerHTML = `<header class="fd-page-head">${head}<div class="fd-actions"><span class="fd-caption" id="gh-loaded" role="status"></span><button class="fd-btn" type="button" id="gh-refresh">Refresh</button></div></header><form id="gh-filter" class="fd-panel fd-filter"><label>Show issues<select name="who">${WHO.map(([value, label]) => option(value, label, f.who)).join('')}</select></label><label id="gh-login" ${f.who === 'user' ? '' : 'hidden'}>GitHub login<input name="login" value="${escape(f.login)}" placeholder="octocat"></label><fieldset class="fd-seg"><legend>State</legend><div>${state('open', 'Open')}${state('closed', 'Closed')}</div></fieldset><label>Label<input name="label" value="${escape(f.label)}" placeholder="Any label"></label><p class="fd-caption fd-explain">These choices are saved and reload the list as soon as you change one. The search and the project chips below only narrow what is already loaded.</p></form><div class="fd-bar"><label class="fd-search"><span class="sr-only">Search loaded issues</span><input id="gh-search" type="search" placeholder="Search loaded issues by title, number or label" value="${escape(ghQuery)}"></label></div><div id="gh-results"></div>`;
     renderGithubList();
   }
   $('github').addEventListener('input', e => { if (e.target.id === 'gh-search') { ghQuery = e.target.value; renderGithubList(); } });
@@ -624,7 +667,7 @@
     const g = data.graph, n = mapSel && node(mapSel);
     if (!n) {
       const linked = g.nodes.some(x => x.dependsOn.length);
-      return `<h2 class="fd-h1">${plural(g.nodes.length, 'project')} in this workspace</h2><p>Select a project to see what it is, what it depends on, who uses it, and what a change in it reaches.</p>${linked ? '' : `<div class="fd-next"><h3>No relationships declared yet</h3><p>Say which projects a project depends on in <code>repos.json</code>:</p><pre>"dependsOn": [{ "project": "theming", "label": "uses styles" }]</pre><p class="fd-caption"><code>factory doctor</code> suggests links it finds in package.json files.</p></div>`}${g.problems.length ? `<h3>Problems in the declared relationships</h3><ul class="fd-needs">${g.problems.map(p => `<li class="fd-fail">${escape(p)}</li>`).join('')}</ul>` : ''}${g.undeclared.length ? `<h3>Found in package.json, not declared</h3><ul class="fd-needs">${g.undeclared.map(l => `<li>${escape(l.from)} lists <code>${escape(l.package)}</code>, which ${escape(l.to)} publishes.</li>`).join('')}</ul>${served ? `<div class="fd-actions"><button class="fd-btn fd-primary" data-declare>Add these ${g.undeclared.length} relationships</button></div>` : ''}<p class="fd-caption">This writes them to <code>dependsOn</code> in repos.json, so the map can draw them. A link that would make two projects depend on each other is left out. Remove one later by editing <code>dependsOn</code>.</p>` : ''}`;
+      return `<h2 class="fd-h1">${plural(g.nodes.length, 'project')} in this workspace</h2><p>Select a project to see what it is, what it depends on, who uses it, and what a change in it reaches.</p>${linked ? '' : `<div class="fd-next"><h3>No relationships declared yet</h3><p>Say which projects a project depends on in <code>repos.json</code>:</p><pre>"dependsOn": [{ "project": "theming", "label": "uses styles" }]</pre><p class="fd-caption"><code>factory doctor</code> suggests links it finds in package.json files.</p></div>`}${g.problems.length ? `<h3>Problems in the declared relationships</h3><ul class="fd-needs">${g.problems.map(p => `<li class="fd-fail">${escape(p)}</li>`).join('')}</ul>` : ''}${g.undeclared.length ? `<h3>Found in package.json, not declared</h3><ul class="fd-needs">${g.undeclared.map(l => `<li>${escape(l.from)} lists <code>${escape(l.package)}</code>, which ${escape(l.to)} publishes.</li>`).join('')}</ul>${served ? `<div class="fd-actions"><button class="fd-btn fd-primary" data-declare>Add these ${g.undeclared.length} relationships</button></div>` : ''}<p class="fd-caption fd-explain">This writes them to <code>dependsOn</code> in repos.json, so the map can draw them. A link that would make two projects depend on each other is left out. Remove one later by editing <code>dependsOn</code>.</p>` : ''}`;
     }
     const tasks = data.issues.filter(i => i.repo === n.key), project = data.projects.find(p => p.key === n.key);
     if (mapMode === 'reach') {
@@ -649,14 +692,14 @@
     $('metrics').innerHTML = '<h2 class="fd-h1">Metrics</h2><p class="fd-desc">How tasks went, derived from recorded evidence and stage history. Archived tasks are included; reviews of other people’s pull requests are not.</p>'
       + `<div class="fd-tiles">${tile('FIRST-PASS CHECK RATE', na(s.firstPassRate, v => `${Math.round(v * 100)}%`), `${number(s.firstPass)} of ${number(s.withGateRuns)} tasks passed every check on its first recorded run. ${number(s.tasks - s.withGateRuns)} without check runs are left out.`)}${tile('MEDIAN TIME TO APPROVAL', na(s.medianHoursToApproval, v => `${number(v, 1)} h`), `${number(s.approved)} approved task${s.approved === 1 ? '' : 's'}, from intake to approval.`)}${tile('REWORK', escape(number(s.failedGateRuns + s.verifierFails + s.resets)), `${number(s.failedGateRuns)} failed check runs · ${number(s.verifierFails)} verifier fail verdicts · ${number(s.resets)} resets after passing checks.`)}</div>`
       + `<div class="fd-table-wrap"><table class="fd-usage-table fd-metrics-table"><caption class="sr-only">Measures per task</caption><thead><tr>${['Task', 'Tier', 'Type', 'Step', 'First pass', 'Failed runs', 'Verifier fails', 'Resets', 'Hours to approval', 'New tokens'].map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${m.tasks.map(t => `<tr><th scope="row">${escape(t.id)}</th><td>${na(t.tier)}</td><td>${na(t.type)}</td><td>${escape(stepName(t.stage, t.id))}</td><td>${t.firstPass === null ? na(null) : `<span class="${t.firstPass ? 'fd-pass' : 'fd-fail'}">${t.firstPass ? 'yes' : 'no'}</span>`}</td><td>${number(t.failedGateRuns)}</td><td>${number(t.verifierFails)}</td><td>${number(t.resets)}</td><td>${na(t.hoursToApproval, v => number(v, 1))}</td><td>${na(t.freshTokens, v => compact(v) + (t.tokensPartial ? ' · partial' : ''))}</td></tr>`).join('')}</tbody></table></div>`
-      + '<p class="fd-caption">“n/a” means no data, not zero. These describe recorded work in this factory; they are not a productivity comparison.</p>';
+      + '<p class="fd-caption fd-explain">“n/a” means no data, not zero. These describe recorded work in this factory; they are not a productivity comparison.</p>';
   }
   function renderActivity() {
     const events = data.issues.flatMap(i => i.history.map(h => ({ ...h, task: i }))).sort((a, b) => b.at.localeCompare(a.at));
     const when = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
     $('activity').innerHTML = '<h2 class="fd-h1">Activity</h2><p class="fd-desc">Every step the tasks in flight have passed, newest first.</p>' + (events.map(h => `<div class="fd-project"><p><button class="fd-link" data-open-task="${escape(h.task.id)}">${escape(h.task.repo)} / ${h.task.kind === 'review' ? 'PR ' : ''}#${escape(h.task.issue)}</button> · <strong>${escape(h.task.steps?.find(x => x.stage === h.stage)?.title || h.stage)}</strong> <span class="fd-caption" title="${escape(h.at)}">${escape(when(h.at))}</span></p>${h.note ? `<p>${escape(h.note)}</p>` : ''}</div>`).join('') || '<p class="fd-blank">Nothing has happened yet. Start a task from GitHub issues.</p>');
   }
-  function render() { renderQueue(); renderBoard(); applyQueueMode(); renderDetail(); renderMap(); renderProjects(); renderActivity(); renderMetrics(); tick(); }
+  function render() { renderQueue(); renderBoard(); applyQueueMode(); renderDetail(); renderMap(); renderProjects(); renderSettings(); renderActivity(); renderMetrics(); tick(); }
   // On a small screen the queue and the detail are separate screens.
   const showPane = (pane) => { document.body.dataset.pane = pane; };
   // Opens the confirm dialog with a button that names the action.
@@ -667,7 +710,7 @@
   function syncHash() {
     if (!hashReady || applying) return;
     const onTask = view === 'work' && queueMode === 'list' && selected;
-    const next = `#${view}${onTask ? `/${encodeURIComponent(selected)}${tab !== 'overview' ? `/${tab}` : ''}` : ''}`;
+    const next = `#${view}${onTask ? `/${encodeURIComponent(selected)}${tab ? `/${tab}` : ''}` : ''}`;
     // The first address replaces the entry the page loaded with; later ones add to the history.
     if (location.hash !== next) { history[placed ? 'pushState' : 'replaceState'](null, '', next); placed = true; }
   }
@@ -676,7 +719,7 @@
     const [name, id, part] = location.hash.slice(1).split('/').map(decodeURIComponent);
     if (!document.querySelector(`.fd-nav [data-view="${CSS.escape(name || '')}"]`)) return;
     applying = true;
-    if (name === 'work' && id && data.issues.some(i => i.id === id)) { selected = id; tab = part || 'overview'; queueMode = 'list'; }
+    if (name === 'work' && id && data.issues.some(i => i.id === id)) { selected = id; tab = part || ''; queueMode = 'list'; }
     // "#work" alone is the board, or a list with no task open.
     else if (name === 'work' && !id && fromHistory && data.issues.length) queueMode = 'board';
     show(name);
@@ -684,7 +727,7 @@
     applying = false; placed = true;
   }
   addEventListener('hashchange', () => applyHash(true));
-  const openTask = (id, to = 'overview') => { selected = id; tab = to; scope = 'task'; show('work'); queueMode = 'list'; applyQueueMode(); renderQueue(); renderDetail(); showPane('detail'); $('detail').focus({ preventScroll: true }); syncHash(); };
+  const openTask = (id, to = '') => { selected = id; tab = to; scope = 'task'; show('work'); queueMode = 'list'; applyQueueMode(); renderQueue(); renderDetail(); showPane('detail'); $('detail').focus({ preventScroll: true }); syncHash(); };
   const pickNode = (key, from) => { mapSel = key; renderMap(); (from === 'panel' ? $('map-panel') : document.querySelector(`#map ${from === 'tree' ? '.fd-leaf' : '.fd-gnode'}[data-node="${CSS.escape(key)}"]`))?.focus({ preventScroll: true }); };
   $('map').onclick = e => {
     if (e.target.closest('[data-declare]')) {
@@ -713,7 +756,7 @@
   $('detail').addEventListener('toggle', e => { if (e.target.open && e.target.dataset?.log) loadLog(e.target); }, true);
   document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => show(button.dataset.view));
   $('search').oninput = e => { query = e.target.value; renderQueue(); };
-  $('tasks').onclick = e => { const button = e.target.closest('[data-task]'); if (button) { selected = button.dataset.task; scope = 'task'; tab = 'overview'; renderQueue(); renderDetail(); showPane('detail'); syncHash(); } };
+  $('tasks').onclick = e => { const button = e.target.closest('[data-task]'); if (button) { selected = button.dataset.task; scope = 'task'; tab = ''; renderQueue(); renderDetail(); showPane('detail'); syncHash(); } };
   $('detail').addEventListener('fd-act', e => detailClick({ target: e.detail }));
   $('detail').onclick = e => detailClick(e);
   function detailClick(e) {
@@ -902,7 +945,7 @@
     $('start-task').disabled = true; $('start-task').textContent = 'Starting…'; $('new-error').textContent = '';
     try {
       const result = await post('/api/task/start', { project, number, kind });
-      $('new-dialog').close(); selected = result.id; tab = 'brief'; show('work'); refresh();
+      $('new-dialog').close(); selected = result.id; tab = ''; show('work'); refresh();
       notice(`${result.id}: started. Its branch and worktree are ready.`);
     } catch (error) { $('new-error').textContent = error.message; }
     finally { $('start-task').textContent = 'Start task'; newCommand(); }
@@ -916,7 +959,6 @@
   window.__factoryError = message => { lost = false; notice(`The board data could not be loaded: ${message}`, true); if (served) $('connection').textContent = 'Connected · data unavailable'; };
   window.__factoryData = next => {
     lost = false; if (!served) $('connection').textContent = 'Static snapshot';
-    if (next.workspace) $('workspace-note').textContent = `WORKSPACE ${next.workspace}`;
     if (next.stamp === data.stamp) return;
     // Keep drafts and open explanations stable while the user interacts.
     if (data.stamp && (document.querySelector('dialog[open], #detail .fd-body details[open]:not(.fd-keep)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) { paused = true; tick(); return; }
@@ -927,7 +969,7 @@
     if (!data.issues.some(i => i.id === selected)) selected = (data.issues.find(i => i.stage === 'ready' && !i.blocked) || data.issues.find(needsYou) || data.issues[0])?.id || null;
     const skipped = data.skipped || [];
     if (skipped.length) notice(`${skipped.length} task${skipped.length === 1 ? '' : 's'} could not be shown. ${skipped.map(x => `${x.id}: ${x.reason}`).join(' ')}`, true);
-    $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()} · usage may lag up to 60 s`;
+    $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()}`;
     // A redraw replaces the focused element; the one that stands for the same thing gets focus back.
     const held = document.activeElement, holder = held?.closest?.('section[id], aside[id], article[id]');
     const key = held && holder && ['task', 'peek', 'tab', 'node', 'edit', 'mode', 'openTask', 'action', 'unblock', 'createPr', 'postReview', 'open'].find(k => held.dataset?.[k] !== undefined);

@@ -52,7 +52,7 @@ Stopping the board (`factory board --stop`) ends the sessions it started. A run 
 
 ### Agent settings
 
-"Agents the board runs" on the Projects page holds the settings of this machine. They are stored under `agents` in `config.json` and are not part of the team export, because what an unattended agent may do is each person's decision.
+"Agents the board runs" on the Settings page holds the settings of this machine. They are stored under `agents` in `config.json` and are not part of the team export, because what an unattended agent may do is each person's decision.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
