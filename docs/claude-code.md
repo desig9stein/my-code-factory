@@ -34,6 +34,12 @@ cp .claude/agents/factory-verifier.md ~/.claude/agents/
 
 Other harnesses that read the Agent Skills format can use the same two folders.
 
+## Sessions the board starts
+
+"Run agent" and `factory work <id>` start `claude -p` in the task's worktree, one session per step, with `--output-format stream-json`, the step's model and the permission mode you chose. See [Running an agent from the board](workflow.md#running-an-agent-from-the-board). The hooks, the factory skill and the verifier agent above apply to these sessions as to any other, because they are ordinary Claude Code sessions of your user. Install the hooks before you let agents run unattended: they are what refuses a push before approval in every mode.
+
+`FACTORY_CLAUDE_BIN` names another program to start instead of `claude`, for an unusual installation.
+
 ## Sandbox and permissions
 
 [`examples/claude-settings.example.json`](examples/claude-settings.example.json) is a starting point for a project's `.claude/settings.json`: the OS sandbox with a short network allowlist and no reads of `~/.ssh` or `~/.aws`, deny rules for force pushes, publishing and `rm -rf`, and a prompt before any push. Merge it with your own settings and add the hosts your project needs. Permission rules match command text and are not a security boundary on their own; the sandbox is what limits a command that slips past them. Setting names follow the Claude Code documentation at the time of writing, so check them against your version.

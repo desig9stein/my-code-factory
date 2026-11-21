@@ -33,7 +33,50 @@ A task's page then offers three ways to put an agent on it, each with the first 
 - **Open in VS Code** uses the `vscode://anthropic.claude-code/open` link. It opens a new Claude Code chat in the VS Code window you last used, so open the task's worktree there first. The link cannot choose the folder.
 - **Copy the prompt** is for JetBrains IDEs and any other agent, which have no such link.
 
-The board does not run an agent by itself in the background. An unattended run needs a permission mode that lets the agent edit and run commands without asking, and that choice is left to you.
+The same page can also run the agent for you, described next.
+
+## Running an agent from the board
+
+"Run agent" on a task's page starts your coding agent in the background. `factory work <id>` does the same in a terminal and stops with Ctrl-C. Today the agent is Claude Code: the factory starts the `claude` program installed on your machine, so the session uses the login you already have. The factory never reads or stores a credential.
+
+A run works like this:
+
+- **One fresh session per step.** The session gets the task id, is told to run `factory next <id>`, to do only the current step, to run `factory advance <id>` and to stop. When it ends, the factory looks at the task and starts the next session. Each step so runs with a clean context on the model the Workflow page names for it, and the verifier is never the session that wrote the change.
+- **It stops when the task needs you**: at human review, when the task is blocked (unclear issue, attempt limit), when a session fails, when you press "Stop the agent", after two sessions in a row that end without finishing the step, or after the configured number of sessions. The task's page says which, shows the agent's last message, and lists the commands that were refused.
+- **It never approves, pushes or opens a pull request.** A run does not start at `ready` or later. Approval is yours, and creating the pull request stays a button on the board.
+- **Intake needs no session.** The factory moves a new task from `intake` to `triage` by itself.
+
+The record of the last run is `agent-run.json` in the task's data folder, and `agent.log` beside it holds what the agent said and the names of the tools it used. As in the activity record, a shell command is reduced to its program name. Token counts come from the session files Claude Code writes, as for a session you start yourself; the cost a session reports is shown as reported and is an estimate by Claude Code, not a bill.
+
+Stopping the board (`factory board --stop`) ends the sessions it started. A run that was cut off that way reads "The board stopped while the agent was running"; start it again to continue from the task's current step.
+
+### Agent settings
+
+"Agents the board runs" on the Projects page holds the settings of this machine. They are stored under `agents` in `config.json` and are not part of the team export, because what an unattended agent may do is each person's decision.
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| What an agent may do (`permission`) | `scoped` | See the modes below. |
+| Account (`account`) | `login` | `login` uses the account you logged in to Claude Code with and does not pass `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` to the session, so a key in your shell is not billed by accident. `environment` passes your environment unchanged. |
+| Agents at once (`maxConcurrent`) | 2 | From 1 to 8. A further "Run agent" waits in a queue. More agents use your plan's limits faster. |
+| Sessions per run (`maxSessions`) | 12 | From 1 to 40. A brake against a run that loops. |
+| Start on creation (`autoStart`) | off | A task created on the board gets an agent at once. |
+
+Permission modes:
+
+- `scoped`, "Edits and listed commands": the session may edit files in the task's worktree and its document folder, and run the factory CLI, Git without push (`status`, `diff`, `log`, `add`, `commit` and similar), `echo` and `pwd`, and the project's install and check commands. Everything else is refused, and the refusal is reported on the task. `git push` and the `gh` commands that publish are refused by name.
+- `auto`, "Claude Code auto mode": Claude Code decides per command. Your version and plan must offer it.
+- `own`, "My own Claude Code settings": the factory adds no rule. What your settings allow runs; what they would ask about is refused, because nobody is there to answer.
+
+A project can have its own mode and a list of extra command prefixes for the scoped mode: "Edit" on its card, or `"agent": { "permission": "scoped", "allow": ["npm test", "npx vitest"] }` in its `repos.json` entry. A line allows every command that starts with it and may not contain brackets.
+
+These rules limit which commands Claude Code runs. They are not an operating-system sandbox: a permitted command can still do anything your user can. Keep the sandbox of Claude Code on (see [the adapter notes](claude-code.md)) and install the guard hooks, which refuse a push or a pull request before approval whatever the mode.
+
+A subscription login is meant for your own use of Claude Code. The factory starts your own installation on your own machine and keeps the number of agents low by default; if you raise it, your plan's usage limits and Anthropic's terms for your plan still apply. A team that wants many unattended agents should use API keys with the `environment` account.
+
+### Other coding agents
+
+The runner knows a coding agent only through an adapter in `lib/harnesses.mjs`: how to build the command of one session, how to read the lines it prints, which permission modes and accounts it offers, and where it writes its session file. `lib/harness-claude.mjs` is the one adapter today. A second agent is one more file with the same functions and one line in that list; the queue, the stage loop, the board and the settings do not change.
 
 ## Configuring the workflow
 

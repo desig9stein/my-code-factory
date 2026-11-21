@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { agentSettings, readRun, runTask } from '../lib/agents.mjs';
 import { proposeForProject } from '../lib/assets.mjs';
 import { hookSettings, installAgentFiles, installHooks } from '../lib/hooks.mjs';
 import { addProject, discoverProjects, initialize, preflight } from '../lib/setup.mjs';
@@ -54,6 +55,8 @@ const HELP = `Codeignite
   next <id>                                            Print the brief of the current stage: what to do, which skill and agent to use
   advance <id>                                         Check the stage exit rule and move on
   block <id> <reason> | unblock <id> [answer]          Park an issue, or resume it; the answer reaches the agent
+  work <id>                                            the user only: run your coding agent on the task, stage by stage,
+                                                       until it needs you. Ctrl-C stops it. The board has the same as "Run agent"
   approve <id>                                         the user only, in a terminal: allow the push
   reject <id> --reason <text> [--lesson <text>]        the user only: send a task at human review back, and keep a lesson for later tasks
   pr <id> <url>                                        Record the opened PR
@@ -564,7 +567,9 @@ const commands = {
   async serve() {
     fs.mkdirSync(factoryRoot(), { recursive: true });
     loadRegistry();
-    await startServer();
+    const server = await startServer();
+    // "board --stop" and Ctrl-C end the agent sessions this server started; they would otherwise run on unseen.
+    for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { server.stopAgents(); process.exit(0); });
     fs.writeFileSync(path.join(factoryRoot(), `.board-${boardPort()}.pid`), String(process.pid));
     console.log(`Board at http://127.0.0.1:${boardPort()}/`);
   },
@@ -612,6 +617,34 @@ const commands = {
     if (args.json) return console.log(JSON.stringify(facts, null, 2));
     console.log(facts.summary);
     if (args.plain) console.log(`\nIn plain English (written by Claude from the facts above):\n\n${await writePlainReport(facts)}`);
+  },
+
+  async work(args) {
+    // An agent that starts agents would run past every brake, so only a person starts one.
+    if (process.env.CLAUDECODE) throw new Error('work starts an agent session, so it runs only outside one. Open a terminal and run it there, or use "Run agent" on the board.');
+    const id = args._[0];
+    loadState(id);
+    const other = readRun(id);
+    if (other && ['running', 'queued'].includes(other.status)) throw new Error(`An agent already runs on ${id} (process ${other.supervisor}). Stop it on the board first.`);
+    const control = { stopped: false, child: null };
+    process.once('SIGINT', () => {
+      control.stopped = true;
+      control.child?.kill('SIGINT');
+    });
+    const settings = agentSettings();
+    console.log(`Running ${settings.harness} on ${id}, at most ${settings.maxSessions} sessions. The log is ${path.join(issueDir(id), 'agent.log')}.`);
+    let shown = 0;
+    const record = await runTask(id, {
+      control,
+      settings,
+      onChange: (run) => {
+        for (const session of run.sessions.slice(shown)) console.log(`Session ${++shown}: stage "${session.stage}"${session.model ? `, model ${session.model}` : ''}`);
+      },
+    });
+    writeBoard();
+    console.log(record.detail);
+    statusOne(sync(loadState(id)));
+    if (record.reason === 'error' || record.reason === 'missing') process.exitCode = 1;
   },
 
   next(args) {

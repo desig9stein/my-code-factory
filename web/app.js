@@ -10,7 +10,7 @@
   let data = { issues: [], projects: [] }, peek = null, lost = false, selected = null, tab = 'overview', view = 'work', scope = 'task', query = '', pending = null;
   let rates = { ...DEFAULT_ASSUMPTIONS }, object = 'bulb';
   let report = null, reportDay = '', reportPlain = '', reportBusy = false;
-  let setup = null, editing = null, gh = null, ghError = '', ghLoading = false, ghRepo = '', ghQuery = '', projectQuery = '';
+  let setup = null, agentsInfo = null, editing = null, gh = null, ghError = '', ghLoading = false, ghRepo = '', ghQuery = '', projectQuery = '';
   let ghFilter = { who: 'assigned', login: '', state: 'open', label: '' };
   // Mirrors the WHO modes in lib/github.mjs.
   const WHO = [['assigned', 'Assigned to me'], ['created', 'Created by me'], ['mentioned', 'Mentioning me'], ['involved', 'Involving me'], ['user', 'Assigned to a GitHub user'], ['anyone', 'Anyone']];
@@ -69,6 +69,8 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not read the setup state.');
       setup = result;
+      const agents = await fetch('/api/agents');
+      if (agents.ok) agentsInfo = await agents.json();
     } catch (error) { notice(error.message, true); return; }
     if (document.querySelector('dialog[open]')) return;
     renderProjects();
@@ -125,7 +127,9 @@
   // The newest sign of an agent on a task: a tool call a hook reported, or a write to a linked session.
   const ACTIVE_MS = 120000;
   const lastSeen = (i) => Math.max(Date.parse(i.activity?.lastInside?.at || '') || 0, Date.parse(i.lastActivity || '') || 0);
-  const isActive = (i) => !i.blocked && Date.now() - lastSeen(i) < ACTIVE_MS;
+  // A run the board started counts as working for as long as it lasts, also between two tool calls.
+  const running = (i) => i.run?.status === 'running';
+  const isActive = (i) => !i.blocked && (running(i) || Date.now() - lastSeen(i) < ACTIVE_MS);
   // The kind is written out, so the chip colour is never the only signal.
   const actChip = (item) => `<span class="fd-achip fd-achip-${escape(item.kind)}">${escape(item.kind === 'mcp' ? `MCP ${item.label}` : item.kind === 'skill' ? `skill ${item.label}` : item.kind === 'agent' ? `${item.label} agent` : item.label)} ${number(item.count)}</span>`;
   const liveInner = (i) => {
@@ -176,6 +180,23 @@
     const vscode = `vscode://anthropic.claude-code/open?prompt=${encodeURIComponent(i.prompt)}`;
     return `<div class="fd-actions"><a class="fd-btn ${primary ? 'fd-primary' : ''}" href="${escape(terminal)}">Open in terminal</a><a class="fd-btn" href="${escape(vscode)}">Open in VS Code</a><button class="fd-btn" type="button" data-copy-prompt>Copy the prompt</button></div><details class="fd-launch-help"><summary>How these buttons work</summary><ul><li><strong>Terminal</strong> opens Claude Code in the task's folder with the message typed in. Press Enter to send it. It works after you have used <code>claude</code> in a terminal once on this machine.</li><li><strong>VS Code</strong> opens a new Claude Code chat in the window you last used, with the message typed in. Open the task's folder there first: <code>${escape(i.worktree)}</code></li><li><strong>WebStorm and other editors</strong> have no such link. Copy the prompt and paste it into the Claude panel or its terminal.</li></ul></details>`;
   }
+  // Starts and stops the user's own coding agent from the board, and says how its last run ended.
+  function runBlock(i, manual) {
+    if (!served) return manual;
+    const r = i.run, tool = escape(r?.harness || 'your coding agent');
+    const log = r?.log ? `<a class="fd-btn" href="/${escape(r.log)}" target="_blank" rel="noopener" data-agent-log>Open the log</a>` : '';
+    const own = (summary) => `<details class="fd-launch-more"><summary>${summary}</summary>${manual}</details>`;
+    if (r?.status === 'running') {
+      return `<p class="fd-now-live"><span class="fd-dot"></span>Codeignite is running ${tool} on this task: session ${r.sessions || 1}${r.stage ? `, step "${escape(stepName(r.stage, i.id))}"` : ''}${r.model ? `, model ${escape(r.model)}` : ''}. Started ${agoShort(r.startedAt)} ago.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Stop the agent</button>${log}</div><p class="fd-caption">It works step by step and stops by itself when the task needs you. Stopping interrupts the session; committed work stays.</p>`;
+    }
+    if (r?.status === 'queued') {
+      return `<p class="fd-now-live"><span class="fd-idle"></span>Waiting for a free slot. At most ${number(data.agents?.maxConcurrent || 1)} agent${data.agents?.maxConcurrent === 1 ? ' runs' : 's run'} at once; change it under Projects.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Take it out of the queue</button></div>`;
+    }
+    const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit'].includes(r.reason);
+    const last = r ? `<p class="${failed ? 'fd-warning' : 'fd-caption'}">The last run ended ${r.endedAt ? `${agoShort(r.endedAt)} ago` : 'without a record of when'} after ${plural(r.sessions, 'session')}: ${escape(r.detail || 'no reason was recorded.')}</p>${r.denials?.length && !/Refused commands/.test(r.detail || '') ? `<p class="fd-caption">Refused commands: ${r.denials.map(d => `<code>${escape(d)}</code>`).join(', ')}. If the agent needs one, allow it for this project under Projects, Edit.</p>` : ''}${r.limit ? `<p class="fd-warning">Your account's usage limit answered "${escape(r.limit.status)}"${r.limit.resetsAt ? `; it resets ${escape(new Date(r.limit.resetsAt).toLocaleString())}` : ''}.</p>` : ''}${r.said ? `<details class="fd-launch-more"><summary>The agent's last message</summary><pre class="fd-now-doc">${escape(r.said)}</pre></details>` : ''}` : '';
+    const mode = data.projects.find(p => p.key === i.repo)?.agent?.permission || data.agents?.permission || '';
+    return `${last}<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-run-agent>${r ? 'Run the agent again' : 'Run agent'}</button>${log}</div><p class="fd-caption">Starts ${escape(data.agents?.label || 'your coding agent')} in the background with your own login, one fresh session per step, until the task needs you.${mode ? ` Permission mode: ${escape(data.agents?.modes?.[mode] || mode)}.` : ''} Change the mode and the limits under Projects.</p>${own('Or open a session yourself')}`;
+  }
   const canDecide = (i) => Boolean(served && i.stage === 'ready' && !i.blocked && i.approvalKey);
   // Keeps the decision and its commit on screen while the user reads the task.
   const decideBar = (i) => canDecide(i) ? `<footer class="fd-footer" aria-label="Your decision"><div class="fd-actions"><button class="fd-btn fd-primary" data-action="approve">Approve this version</button><button class="fd-btn" data-action="reject">Send back</button><span class="fd-branch">commit ${escape((i.head || '').slice(0, 12))}</span></div></footer>` : '';
@@ -218,7 +239,7 @@
       const create = served ? `<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-create-pr>Create the pull request</button></div><p class="fd-caption">Pushes the branch <code>${escape(i.branch)}</code> and opens the pull request into <code>${escape(i.base)}</code> with the approved description, using your GitHub login.</p>` : '';
       return panel('you', 'you approved this, now create the pull request', `<p>Nothing has been pushed yet.</p>${create}<details class="fd-launch-more"><summary>Or let an agent do it</summary>${agent}</details>${own}`);
     }
-    return panel('agent', `The agent is at: ${name}`, `<p>${escape(i.about || 'The agent works on this step.')}</p>${notes}${missing}${agent}`);
+    return panel('agent', `The agent is at: ${name}`, `<p>${escape(i.about || 'The agent works on this step.')}</p>${notes}${missing}${runBlock(i, agent)}`);
   }
   function renderQueue() {
     const shown = data.issues.filter(i => `${i.title} ${i.repo} ${i.id}`.toLowerCase().includes(query.toLowerCase()));
@@ -337,6 +358,17 @@
     const gates = p.gates.length ? `<ul class="fd-gate-list">${p.gates.map(g => `<li><span class="fd-chip">${escape(g.name)}</span><code title="${escape(g.cmd)}">${escape(g.cmd)}</code></li>`).join('')}</ul>` : '<p><span class="fd-badge fd-badge-warn">No check configured</span></p>';
     return `<article class="fd-card ${kind}"><header><h3>${escape(p.key)}</h3><span class="fd-badge" title="Base branch">${escape(p.baseBranch)}</span></header><div><p class="fd-card-remote">${externalLink(`https://github.com/${p.remote}`, p.remote)}</p>${gates}${p.install ? `<p class="fd-card-install"><span>install</span><code title="${escape(p.install)}">${escape(p.install)}</code></p>` : ''}</div>${footer ? `<footer>${footer}</footer>` : ''}</article>`;
   }
+  // The machine's settings for agents the board starts: what they may do, how many run, which login they use.
+  function agentsSection() {
+    if (!served) return '';
+    if (!agentsInfo) return '<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption">Loading…</p>';
+    const { settings: s, harness: h, limits } = agentsInfo;
+    const options = (list, value) => list.map(o => `<option value="${escape(o.id)}"${o.id === value ? ' selected' : ''}>${escape(o.label)}</option>`).join('');
+    const explain = (list) => `<dl class="fd-agent-modes">${list.map(o => `<dt>${escape(o.label)}</dt><dd>${escape(o.about)}</dd>`).join('')}</dl>`;
+    return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. ${h.version ? `Found: ${escape(h.version)}.` : `<span class="fd-warning">${escape(h.label)} was not found. ${escape(h.install)}</span>`} These settings stay on this machine and are not part of the team export.</p>
+<form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
+<details class="fd-launch-more fd-keep"><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption">A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
+  }
   function renderProjectCards() {
     const match = p => `${p.key} ${p.remote}`.toLowerCase().includes(projectQuery.toLowerCase());
     const registered = data.projects.filter(match).sort((a, b) => a.key.localeCompare(b.key));
@@ -349,7 +381,7 @@
   function renderProjects() {
     const bare = data.projects.filter(p => !p.gates.length).length;
     const stats = `<span class="fd-stat"><b>${data.projects.length}</b> registered</span>${bare ? `<span class="fd-stat fd-stat-warn"><b>${bare}</b> without a check</span>` : ''}${served && setup?.candidates.length ? `<span class="fd-stat"><b>${setup.candidates.length}</b> not registered</span>` : ''}`;
-    $('projects').innerHTML = `<header class="fd-page-head"><div><h2 class="fd-h1">Projects</h2><p class="fd-desc">Each project supplies its own checks. Settings are saved on this machine; Export shares them with your team.</p></div><div class="fd-stats">${stats}${served ? '<button class="fd-btn" type="button" id="export-config" title="Projects, gates and workflow in one file, without paths or task data">Export for the team</button>' : ''}</div></header>${checklist()}<div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div>${served ? `<h2 class="fd-section">Add a project by its folder</h2><p class="fd-caption">For a repository that is not inside the workspace${data.workspace ? ` (${escape(data.workspace)})` : ''}, or one the list above did not find. It needs to be cloned on this machine and have a GitHub origin.</p><form id="locate-form" class="fd-locate"><label><span class="sr-only">Folder of the repository</span><input name="path" required placeholder="~/code/my-app" autocomplete="off" spellcheck="false"></label><button class="fd-btn" type="submit">Find it</button></form><p id="locate-error" class="fd-failed" role="alert"></p>` : ''}<p class="fd-caption fd-page-foot">Branch conventions and other project rules live in repos.json in your Codeignite data folder.</p>`;
+    $('projects').innerHTML = `<header class="fd-page-head"><div><h2 class="fd-h1">Projects</h2><p class="fd-desc">Each project supplies its own checks. Settings are saved on this machine; Export shares them with your team.</p></div><div class="fd-stats">${stats}${served ? '<button class="fd-btn" type="button" id="export-config" title="Projects, gates and workflow in one file, without paths or task data">Export for the team</button>' : ''}</div></header>${checklist()}${agentsSection()}<h2 class="fd-section">Registered projects</h2><div class="fd-bar"><label class="fd-search"><span class="sr-only">Filter projects</span><input id="project-search" type="search" placeholder="Filter by name or repository" value="${escape(projectQuery)}"></label></div><div id="project-cards"></div>${served ? `<h2 class="fd-section">Add a project by its folder</h2><p class="fd-caption">For a repository that is not inside the workspace${data.workspace ? ` (${escape(data.workspace)})` : ''}, or one the list above did not find. It needs to be cloned on this machine and have a GitHub origin.</p><form id="locate-form" class="fd-locate"><label><span class="sr-only">Folder of the repository</span><input name="path" required placeholder="~/code/my-app" autocomplete="off" spellcheck="false"></label><button class="fd-btn" type="submit">Find it</button></form><p id="locate-error" class="fd-failed" role="alert"></p>` : ''}<p class="fd-caption fd-page-foot">Branch conventions and other project rules live in repos.json in your Codeignite data folder.</p>`;
     renderProjectCards();
   }
   $('projects').addEventListener('submit', async e => {
@@ -358,6 +390,18 @@
     $('locate-error').textContent = '';
     try { openProject('add', await post('/api/project/locate', { path: e.target.elements.path.value })); }
     catch (error) { $('locate-error').textContent = error.message; }
+  });
+  $('projects').addEventListener('submit', async e => {
+    if (e.target.id !== 'agents-form') return;
+    e.preventDefault();
+    const f = e.target.elements;
+    $('agents-error').textContent = '';
+    try {
+      const saved = await post('/api/agents/settings', { permission: f.permission.value, account: f.account.value, maxConcurrent: Number(f.maxConcurrent.value), maxSessions: Number(f.maxSessions.value), autoStart: f.autoStart.checked });
+      agentsInfo.settings = saved.settings;
+      notice('Agent settings saved. They apply to the next run.');
+      document.activeElement?.blur(); refresh();
+    } catch (error) { $('agents-error').textContent = error.message; }
   });
   $('projects').addEventListener('input', e => { if (e.target.id === 'project-search') { projectQuery = e.target.value; renderProjectCards(); } });
   const dayOf = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -413,9 +457,16 @@
     form.elements.key.value = p.key; form.elements.key.readOnly = mode === 'edit';
     form.elements.baseBranch.value = p.baseBranch; form.elements.install.value = p.install || '';
     $('project-gates').innerHTML = p.gates.map(gateRow).join('');
+    // A project's own agent settings exist once it is registered.
+    $('project-agent').hidden = mode !== 'edit' || !agentsInfo;
+    if (agentsInfo) form.elements.agentPermission.innerHTML = `<option value="">Same as this machine's setting</option>${agentsInfo.harness.permissionModes.map(o => `<option value="${escape(o.id)}">${escape(o.label)}</option>`).join('')}`;
+    form.elements.agentPermission.value = p.agent?.permission || '';
+    form.elements.agentAllow.value = (p.agent?.allow || []).join('\n');
+    editing.agent = JSON.stringify(agentOf(form));
     $('project-error').textContent = '';
     $('project-dialog').showModal();
   }
+  const agentOf = (form) => ({ permission: form.elements.agentPermission.value, allow: form.elements.agentAllow.value.split('\n').map(line => line.trim()).filter(Boolean) });
   $('add-gate').onclick = () => { $('project-gates').insertAdjacentHTML('beforeend', gateRow()); $('project-gates').lastElementChild.querySelector('input').focus(); };
   $('project-gates').onclick = e => { if (e.target.closest('[data-drop-gate]')) e.target.closest('.fd-gate').remove(); };
   $('cancel-project').onclick = () => $('project-dialog').close();
@@ -425,7 +476,7 @@
     const gates = [...$('project-gates').querySelectorAll('.fd-gate')].map(row => ({ name: row.querySelector('[data-gate=name]').value.trim(), cmd: row.querySelector('[data-gate=cmd]').value.trim(), ...(row.dataset.cwd ? { cwd: row.dataset.cwd } : {}) }));
     $('save-project').disabled = true;
     try {
-      if (editing.mode === 'edit') await post('/api/project/update', { key: editing.key, gates, ...(base !== editing.baseBranch ? { baseBranch: base } : {}), ...(install !== editing.install ? { install } : {}) });
+      if (editing.mode === 'edit') await post('/api/project/update', { key: editing.key, gates, ...(base !== editing.baseBranch ? { baseBranch: base } : {}), ...(install !== editing.install ? { install } : {}), ...(!$('project-agent').hidden && JSON.stringify(agentOf(form)) !== editing.agent ? { agent: agentOf(form) } : {}) });
       else await post('/api/project/add', { key: form.elements.key.value.trim(), dir: editing.dir, baseBranch: base, install, gates });
       notice(`${form.elements.key.value.trim()}: ${editing.mode === 'edit' ? 'saved' : 'registered'}.`);
       $('project-dialog').close(); gh = null; refresh(); loadSetup();
@@ -657,7 +708,7 @@
     if (e.target.closest('[data-close]')) { const id = peek; peek = null; renderBoard(); document.querySelector(`[data-peek="${CSS.escape(id)}"]`)?.focus(); return; }
     const open = e.target.closest('[data-open]'); if (open) return openTask(peek, open.dataset.open);
     // The drawer shows the same panel as the task page, so its buttons take the same path.
-    if (e.target.closest('[data-action], [data-unblock], [data-post-questions], [data-create-pr], [data-post-review], [data-copy-doc], [data-copy-prompt], .fd-now a.fd-btn, [data-tab]')) { selected = peek; const twin = e.target.closest('[data-tab]'); if (twin) return openTask(peek, twin.dataset.tab); $('detail').dispatchEvent(new CustomEvent('fd-act', { detail: e.target })); }
+    if (e.target.closest('[data-action], [data-unblock], [data-post-questions], [data-create-pr], [data-post-review], [data-copy-doc], [data-copy-prompt], [data-run-agent], [data-stop-agent], .fd-now a.fd-btn, [data-tab]')) { selected = peek; const twin = e.target.closest('[data-tab]'); if (twin) return openTask(peek, twin.dataset.tab); $('detail').dispatchEvent(new CustomEvent('fd-act', { detail: e.target })); }
   };
   $('detail').addEventListener('toggle', e => { if (e.target.open && e.target.dataset?.log) loadLog(e.target); }, true);
   document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => show(button.dataset.view));
@@ -717,7 +768,13 @@
       $('action-text').textContent = `The text shown on the page is posted as a comment on ${i.repo} #${i.issue}, under your GitHub name. Everyone who follows the issue sees it. The task keeps waiting until you put the answer here.`;
       openAction('Post the questions');
     }
-    if (e.target.closest('.fd-now a.fd-btn')) { launched[task().id] = Date.now(); setTimeout(renderDetail, 300); }
+    const agentButton = e.target.closest('[data-run-agent], [data-stop-agent]');
+    if (agentButton) {
+      const i = task(), stop = agentButton.hasAttribute('data-stop-agent');
+      agentButton.disabled = true;
+      post(stop ? '/api/agent/stop' : '/api/agent/run', { id: i.id }).then(result => { notice(stop ? `${i.id}: the agent is stopping.` : result.status === 'queued' ? `${i.id}: waiting for a free slot.` : `${i.id}: the agent started. This page follows it.`); refresh(); }, error => { notice(error.message, true); agentButton.disabled = false; });
+    }
+    if (e.target.closest('.fd-now a.fd-btn:not([data-agent-log])')) { launched[task().id] = Date.now(); setTimeout(renderDetail, 300); }
     if (e.target.closest('[data-copy-prompt]')) {
       navigator.clipboard.writeText(task().prompt).then(() => notice('Prompt copied. Paste it into your agent.'), () => notice('Clipboard unavailable. Run "factory next" for this task in your agent instead.'));
     }

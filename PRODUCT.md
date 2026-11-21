@@ -22,7 +22,7 @@ A repeatable pipeline. Every task goes through the same stages, gates and brakes
 
 - Runs locally. The server listens on `127.0.0.1`, and project data lives in `~/.code-factory`, outside this repository.
 - Works on Git worktrees and through the GitHub CLI (`gh`). Requires Node.js 22 or newer. macOS and Linux are the targets; Windows is not validated.
-- Any coding harness can use the CLI. Transcript attribution and guard hooks are built for Claude Code.
+- Any coding harness can use the CLI. Transcript attribution, guard hooks and running an agent from the board are built for Claude Code, behind an adapter that other agents can implement.
 - The board updates when task data changes and keeps open forms and explanations until the user finishes interacting.
 
 ## Capabilities and Constraints
@@ -32,6 +32,7 @@ A repeatable pipeline. Every task goes through the same stages, gates and brakes
 - Approval is checked by the backend and bound to the displayed commit or draft. Creating a pull request or posting a review is a separate, explicit action.
 - Projects page, Workflow page, workspace map, GitHub issues view, Daily report, metrics, setup checklist.
 - Token counts per task and session, with electricity and carbon scenarios whose assumptions and formulas are shown.
+- "Run agent" starts the user's own coding agent in the background, one session per step, until the task needs the user. What it may do, how many run at once and the account are settings of the machine.
 - Brakes: a limit on failed attempts, and "Send back" with a lesson that later briefs carry.
 - Constraint: local only. No hosted version, accounts or telemetry.
 - Current state, not confirmed as a commitment: the board is plain HTML, CSS and JS with no runtime npm dependencies and no build step.
