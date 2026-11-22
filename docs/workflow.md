@@ -42,7 +42,7 @@ The same page can also run the agent for you, described next.
 A run works like this:
 
 - **One fresh session per step.** The session gets the task id, is told to run `factory next <id>`, to do only the current step, to run `factory advance <id>` and to stop. When it ends, the factory looks at the task and starts the next session. Each step so runs with a clean context on the model the Workflow page names for it, and the verifier is never the session that wrote the change.
-- **It stops when the task needs you**: at human review, when the task is blocked (unclear issue, attempt limit), when a session fails, when you press "Stop the agent", after two sessions in a row that end without finishing the step, or after the configured number of sessions. The task's page says which, shows the agent's last message, and lists the commands that were refused.
+- **It stops when the task needs you**: at human review, when the task is blocked (unclear issue, attempt limit), when a session fails, when you press "Stop the agent", after two sessions in a row that end without finishing the step, after the configured number of sessions, or when a session runs past its time limit. A task cannot be archived while an agent runs on it. The task's page says which, shows the agent's last message, and lists the commands that were refused.
 - **It never approves, pushes or opens a pull request.** A run does not start at `ready` or later. Approval is yours, and creating the pull request stays a button on the board.
 - **Intake needs no session.** The factory moves a new task from `intake` to `triage` by itself.
 
@@ -60,6 +60,7 @@ Stopping the board (`factory board --stop`) ends the sessions it started. A run 
 | Account (`account`) | `login` | `login` uses the account you logged in to Claude Code with and does not pass `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` to the session, so a key in your shell is not billed by accident. `environment` passes your environment unchanged. |
 | Agents at once (`maxConcurrent`) | 2 | From 1 to 8. A further "Run agent" waits in a queue. More agents use your plan's limits faster. |
 | Sessions per run (`maxSessions`) | 12 | From 1 to 40. A brake against a run that loops. |
+| Minutes per session (`sessionMinutes`) | 60 | From 1 to 480. A session that runs longer is interrupted and the run stops, so a hung session does not hold its slot. Committed work stays. |
 | Start on creation (`autoStart`) | off | A task created on the board gets an agent at once. |
 
 Permission modes:
