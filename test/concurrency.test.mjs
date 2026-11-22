@@ -173,6 +173,32 @@ test('the board answers at once while GitHub is slow, and requests for the same 
   }
 });
 
+test('the GitHub issue list is kept across a restart and asked for again only on refresh or a changed filter', async () => {
+  const { saveIssueFilter } = await import('../lib/github.mjs');
+  const timed = async (base, pathname) => { const t = Date.now(); const r = await fetch(`${base}${pathname}`); return [await r.json(), Date.now() - t]; };
+  // The test before this one loaded the list once; a board started afresh answers from what was kept.
+  const server = await startServer(0, { pairing: false });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const kept = JSON.parse(fs.readFileSync(path.join(ROOT, 'cache', 'github-issues.json'), 'utf8'));
+    const [first, firstMs] = await timed(base, '/api/github/issues');
+    assert.ok(firstMs < 1000, `the kept list took ${firstMs} ms`);
+    assert.equal(first.loadedAt, new Date(kept.at).toISOString());
+    const [again, againMs] = await timed(base, '/api/github/issues');
+    assert.ok(againMs < 1000 && again.loadedAt === first.loadedAt);
+    // Refresh asks GitHub, and so does another filter; the stand-in takes two seconds to answer.
+    const [refreshed, refreshMs] = await timed(base, '/api/github/issues?fresh=1');
+    assert.ok(refreshMs >= 1900 && refreshed.loadedAt > first.loadedAt, `refresh took ${refreshMs} ms`);
+    saveIssueFilter({ who: 'created', login: '', state: 'open', label: '' });
+    const [other, otherMs] = await timed(base, '/api/github/issues');
+    assert.ok(otherMs >= 1900 && other.filter.who === 'created', `a new filter took ${otherMs} ms`);
+    assert.ok((await timed(base, '/api/github/issues'))[1] < 1000);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
+});
+
 test('a job reports its error to the caller, and a closed set of lanes starts nothing', async () => {
   const lanes = createLanes();
   await assert.rejects(lanes.run('local', 'nope'), /Unknown job "nope"/);

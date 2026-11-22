@@ -604,7 +604,7 @@
   function renderGithubList() {
     const all = gh?.issues || [];
     if (ghRepo && !all.some(i => i.project === ghRepo)) ghRepo = '';
-    $('gh-loaded').textContent = ghLoading ? 'Loading…' : gh && !ghError ? `Loaded ${new Date(gh.loadedAt).toLocaleTimeString()}` : '';
+    $('gh-loaded').textContent = ghLoading ? 'Loading…' : gh && !ghError ? `From GitHub ${agoShort(gh.loadedAt)} ago · kept until you refresh` : '';
     if (ghError) { $('gh-results').innerHTML = `<p class="fd-blank fd-failed" role="alert">${escape(ghError)}</p>`; return; }
     if (!gh) { $('gh-results').innerHTML = '<p class="fd-blank">Loading issues from GitHub…</p>'; return; }
     if (!data.projects.length) { $('gh-results').innerHTML = '<p class="fd-blank">No project is registered yet. Register one on the Projects page first.</p>'; return; }
