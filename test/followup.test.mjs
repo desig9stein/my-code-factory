@@ -1,6 +1,7 @@
 // Covers the loop after a pull request opens: what GitHub says about it, what the board shows, and what
 // reaches the agent only when the user sends it.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,7 +35,11 @@ write(path.join(ROOT, 'repos.json'), JSON.stringify({ defaults: {}, repos: { dem
 write(path.join(STUB, 'gh'), '#!/bin/sh\nif [ -n "$GH_FAIL" ]; then echo "could not resolve host: api.github.com" >&2; exit 1; fi\ncase "$1" in pr) cat "$GH_VIEW";; api) cat "$GH_INLINE";; *) echo "[]";; esac\n');
 fs.chmodSync(path.join(STUB, 'gh'), 0o755);
 
-const HEAD = 'a'.repeat(40);
+// A real repository on the task's branch: recording a pull request checks that the branch is the approved commit.
+const gitIn = (...args) => { const r = spawnSync('git', args, { cwd: path.join(WS, 'demo'), encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' } }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+gitIn('init', '-q', '-b', 'fix');
+gitIn('commit', '-q', '--allow-empty', '-m', 'feat: one');
+const HEAD = gitIn('rev-parse', 'HEAD');
 const URL = 'https://github.com/acme/demo/pull/9';
 function task(number, extra = {}) {
   const id = `demo-${number}`;
@@ -128,7 +133,8 @@ test('the user\'s text sends the task back to the agent, and the update answers 
   assert.equal(feedbackView(loadState(id)).needsYou, false);
   // The fix is approved and goes out: the passed-on text is answered, and what was sent is not shown as new again.
   const state = loadState(id);
-  const pushed = 'b'.repeat(40);
+  gitIn('commit', '-q', '--allow-empty', '-m', 'fix: two');
+  const pushed = gitIn('rev-parse', 'HEAD');
   Object.assign(state, { stage: 'approved', approvedSha: pushed, gatesSha: pushed });
   saveState(state);
   recordPr(loadState(id), getRepo('demo'), URL);
@@ -140,6 +146,14 @@ test('the user\'s text sends the task back to the agent, and the update answers 
   answer(view({ headRefOid: pushed, statusCheckRollup: [], reviews: [{ author: { login: 'reviewer' }, state: 'COMMENTED', body: 'One more thing.', submittedAt: new Date(Date.now() + 60_000).toISOString() }], comments: [] }), []);
   fetchFeedback(id);
   assert.deepEqual([feedbackView(loadState(id)).notes.map((n) => n.body), feedbackView(loadState(id)).needsYou], [['One more thing.'], true]);
+  // A moved branch is not what was approved, so nothing is recorded for it; neither is an address of another repository.
+  gitIn('reset', '-q', '--hard', HEAD);
+  const stale = task(40, { stage: 'approved', prUrl: null });
+  gitIn('branch', '-f', 'elsewhere', pushed);
+  assert.throws(() => recordPr(Object.assign(loadState(stale), { branch: 'elsewhere' }), getRepo('demo'), URL), /changed after it was approved: the commit, the branch or pr-body\.md is not what was approved/);
+  assert.throws(() => recordPr(loadState(stale), { ...getRepo('demo'), remote: 'acme/my.repo' }, 'https://github.com/acme/myXrepo/pull/5'), /Expected a PR URL/);
+  assert.throws(() => recordPr(loadState(stale), getRepo('demo'), 'https://github.com/acme/demo/pull/0'), /Expected a PR URL/);
+  assert.equal(recordPr(loadState(stale), getRepo('demo'), URL).stage, 'pr-opened');
 });
 
 test('the board asks GitHub on request and sends feedback only with its token', async () => {
@@ -166,4 +180,61 @@ test('the board asks GitHub on request and sends feedback only with its token', 
     server.close();
     server.closeAllConnections();
   }
+});
+
+test('feedback written while the user decides stays new, and checks are not called running when they failed', () => {
+  const id = task(20);
+  const early = new Date(Date.now() - 120_000).toISOString().replace(/\.\d+Z$/, 'Z');
+  const late = new Date(Date.now() + 120_000).toISOString().replace(/\.\d+Z$/, 'Z');
+  const note = (body, at) => ({ author: { login: 'reviewer' }, state: 'COMMENTED', body, submittedAt: at });
+  answer(view({ statusCheckRollup: [], reviews: [note('First.', early)], comments: [] }), []);
+  fetchFeedback(id);
+  assert.deepEqual(feedbackView(loadState(id)).notes.map((n) => n.body), ['First.']);
+  // The reviewer writes again after the board asked and before the user sends: the second note was never on screen.
+  sendFeedback(id, 'Fix the first thing.');
+  const back = loadState(id);
+  Object.assign(back, { stage: 'pr-opened', stageSince: new Date().toISOString(), approvedSha: HEAD, gatesSha: HEAD });
+  saveState(back);
+  answer(view({ statusCheckRollup: [], reviews: [note('First.', early), note('Second, written meanwhile.', late)], comments: [] }), []);
+  fetchFeedback(id);
+  assert.deepEqual([feedbackView(loadState(id)).notes.map((n) => n.body), feedbackView(loadState(id)).needsYou], [['Second, written meanwhile.'], true]);
+
+  // GitHub's pull request is at another commit, asked after the last update: its failed checks are shown as failed.
+  const moved = task(21);
+  answer(view({ headRefOid: 'c'.repeat(40), reviews: [], comments: [] }), []);
+  fetchFeedback(moved);
+  const seen = feedbackView(loadState(moved));
+  assert.deepEqual([seen.failed.length, seen.pending, seen.movedOnGitHub, seen.outdated, seen.needsYou], [2, 1, true, false, true]);
+  // An answer from before the last update says nothing about the new commit, and says so.
+  const later = loadState(moved);
+  later.stageSince = new Date(Date.now() + 60_000).toISOString();
+  saveState(later);
+  const old = feedbackView(loadState(moved));
+  assert.deepEqual([old.failed.length, old.pending, old.outdated, old.movedOnGitHub, old.needsYou], [0, 0, true, false, false]);
+});
+
+test('what does not fit is counted, a deleted account still counts, and feedback is not sent where nothing can be fixed', () => {
+  const id = task(22);
+  const at = (n) => new Date(Date.now() - (200 - n) * 1000).toISOString();
+  const many = Array.from({ length: 100 }, (_, n) => ({ author: { login: 'reviewer' }, body: `Comment ${n}. ${'word '.repeat(60)}`, createdAt: at(n) }));
+  answer(view({ statusCheckRollup: [], reviews: [{ author: null, state: 'CHANGES_REQUESTED', body: '', submittedAt: at(150) }], comments: many }), []);
+  const stored = fetchFeedback(id);
+  assert.deepEqual([stored.notes.length, stored.omitted.notes], [40, 61]);
+  assert.equal(stored.notes.at(-1).author, 'a deleted account');
+  const shown = feedbackView(loadState(id));
+  assert.equal(shown.omitted.notes, 61);
+  assert.ok(shown.draft.length <= 6000);
+  assert.match(shown.draft, /\n- \(More is on the pull request; this list was cut to fit\.\)$/);
+  // An answer that is not GitHub's keeps the last good one and gives a reason a person can read.
+  for (const body of ['', 'null', '<html>502</html>']) {
+    fs.writeFileSync(process.env.GH_VIEW, body);
+    assert.match(fetchFeedback(id).error, /GitHub could not be asked: the answer was not what GitHub sends/);
+    assert.equal(feedbackView(loadState(id)).notes.length, 40);
+  }
+  // A merged pull request, and an archived task, take no feedback.
+  answer(view({ state: 'MERGED', mergedAt: at(199) }), []);
+  fetchFeedback(id);
+  assert.throws(() => sendFeedback(id, 'One more thing.'), /The pull request of demo-22 is merged, so there is nothing left to fix on it/);
+  const gone = task(23, { archived: true });
+  assert.throws(() => sendFeedback(gone, 'One more thing.'), /demo-23 is archived/);
 });

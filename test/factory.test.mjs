@@ -377,6 +377,18 @@ test('a PR body edited after the verdict needs a new verdict', () => {
 
 test('ready still refuses the push until approval', () => {
   assert.equal(bash('git push -u origin HEAD', WT).deny, true);
+  // What let the task reach "ready" is looked at again when it is approved.
+  const body = path.join(ISSUE, 'pr-body.md');
+  const judged = fs.readFileSync(body, 'utf8');
+  write(body, `${judged}\nA claim the verifier never saw.\n`);
+  assert.throws(() => approve(loadState(ID)), /cannot be approved as it stands:\n- pr-body\.md changed after the verdict/);
+  write(body, judged);
+  write(path.join(WT, 'stray.txt'), 'x');
+  assert.throws(() => approve(loadState(ID)), /The worktree has uncommitted changes/);
+  fs.rmSync(path.join(WT, 'stray.txt'));
+  assert.equal(cli('block', ID, 'a question is open').status, 0);
+  assert.throws(() => approve(loadState(ID)), /It is blocked: a question is open/);
+  assert.equal(cli('unblock', ID).status, 0);
   approve(loadState(ID));
   assert.equal(bash('git push -u origin HEAD', WT).deny, false);
 });
@@ -607,4 +619,144 @@ test('one damaged task or a removed project is reported and does not hide the ot
   assert.match(cli('graph').out, /repos\.json is not valid JSON/);
   write(registry, kept);
   for (const id of ['demo-30', 'demo-31']) assert.equal(cli('archive', id, '--delete-branch').status, 0);
+});
+
+test('evidence that is removed, forged or unreadable is found, and one bad file does not stop the task list', async () => {
+  const crypto = await import('node:crypto');
+  assert.equal(cli('new', 'demo#40', '--title', 'Sealed task').status, 0);
+  const dir = path.join(ROOT, 'issues', 'demo-40', 'evidence');
+  assert.equal(loadState('demo-40').sealed, true);
+  assert.deepEqual(verifyChain('demo-40'), []);
+  cli('run', 'demo-40', 'lint');
+  cli('run', 'demo-40', 'lint');
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort();
+  assert.equal(files.length, 2);
+  const last = path.join(dir, files[1]);
+  const kept = fs.readFileSync(last, 'utf8');
+  // The newest record removed: the links between the others still hold, the count does not.
+  fs.rmSync(last);
+  assert.match(verifyChain('demo-40').join(' '), /2 evidence record\(s\) were written and 1 is there: the newest were removed/);
+  // A record rewritten with its hash worked out again.
+  const forged = { ...JSON.parse(kept), durationMs: 1 };
+  delete forged.hash;
+  forged.hash = crypto.createHash('sha256').update(JSON.stringify(forged)).digest('hex');
+  write(last, JSON.stringify(forged));
+  assert.match(verifyChain('demo-40').join(' '), /The newest evidence record is not the one that was written last/);
+  // The sealed count itself removed.
+  write(last, kept);
+  const head = path.join(dir, '.head');
+  const seal = fs.readFileSync(head, 'utf8');
+  fs.rmSync(head);
+  assert.match(verifyChain('demo-40').join(' '), /The sealed count of the evidence is missing or was edited/);
+  write(head, seal.replace('"count":2', '"count":1'));
+  assert.match(verifyChain('demo-40').join(' '), /The sealed count of the evidence is missing or was edited/);
+  write(head, seal);
+  assert.deepEqual(verifyChain('demo-40'), []);
+  // A file that cannot be read is tampering on its task, and every other command still works.
+  write(last, '{"seq":');
+  assert.match(verifyChain('demo-40').join(' '), /Record file 002-lint\.json cannot be read/);
+  const listed = cli('status');
+  assert.equal(listed.status, 0, listed.out);
+  assert.match(listed.out, /demo-40/);
+  assert.match(cli('advance', 'demo-40').out, /Evidence integrity: Record file 002-lint\.json cannot be read/);
+  write(last, kept);
+  assert.deepEqual(verifyChain('demo-40'), []);
+});
+
+test('a copied task folder, an impossible issue number and an archived task are each refused in plain words', () => {
+  // A copy still says the first task's id; a command on it would change the first task.
+  fs.cpSync(path.join(ROOT, 'issues', 'demo-40'), path.join(ROOT, 'issues', 'demo-40.bak'), { recursive: true });
+  const blocked = cli('block', 'demo-40.bak', 'x');
+  assert.equal(blocked.status, 1);
+  assert.match(blocked.out, /The state of demo-40\.bak cannot be used: it says it is task "demo-40", which is not the name of its folder/);
+  assert.equal(loadState('demo-40').blocked, null);
+  assert.match(cli('status').out, /! demo-40\.bak: The state of demo-40\.bak cannot be used/);
+  fs.rmSync(path.join(ROOT, 'issues', 'demo-40.bak'), { recursive: true });
+  for (const state of ['null', '[]', '{}', '5', '{"id":"demo-40","stage":"intake","repo":"demo"}']) {
+    const file = path.join(ROOT, 'issues', 'demo-40', 'state.json');
+    const good = fs.readFileSync(file, 'utf8');
+    write(file, state);
+    assert.match(cli('next', 'demo-40').out, /The state of demo-40 cannot be used: it /, state);
+    write(file, good);
+  }
+  // Nothing is created for a number that cannot be an issue.
+  for (const ref of ['demo#0', 'demo#99999999999999999999999', 'demo#9007199254740993']) {
+    const made = cli('new', ref, '--title', 'x');
+    assert.equal(made.status, 1, ref);
+    assert.match(made.out, /is not an issue number/);
+  }
+  assert.deepEqual(fs.readdirSync(path.join(ROOT, 'worktrees')).filter((name) => /e\+|^demo-0$|9007/.test(name)), []);
+  assert.match(cli('new', 'demo#41', '--title').out, /--title needs a value/);
+  assert.equal(fs.existsSync(path.join(ROOT, 'worktrees', 'demo-41')), false);
+  // Commands given too little say what they need.
+  assert.match(cli('run', 'demo-40').out, /run needs the name of what to run/);
+  assert.match(cli('verdict', 'demo-40', 'pass', '--report', tmp).out, /verdict needs --report <file>/);
+  assert.match(cli('review', 'demo#77', '--from', path.join(tmp, 'no-such.json')).out, /cannot be read as a pull request \(there is no such file\)/);
+  // An archived task says so, and is not archived twice.
+  assert.equal(cli('archive', 'demo-40', '--delete-branch').status, 0);
+  assert.match(cli('archive', 'demo-40').out, /demo-40 is archived already/);
+  for (const command of [['block', 'demo-40', 'x'], ['advance', 'demo-40'], ['run', 'demo-40', 'lint'], ['note', 'demo-40', 'reproduce', 'x']]) assert.match(cli(...command).out, /demo-40 is archived, so "\w+" has nothing to work on/, command[0]);
+  assert.match(cli('new', 'demo#40', '--title', 'Again').out, /demo-40 exists and is archived/);
+  // Names every object answers to are not commands or projects.
+  for (const name of ['toString', 'constructor', 'hasOwnProperty']) assert.equal(cli(name).status, 1, name);
+  assert.match(cli('new', 'constructor#1', '--title', 'x').out, /Unknown repo "constructor"/);
+});
+
+test('the guard sees through cheap disguises, and does not refuse ordinary commands that only say a word', () => {
+  assert.equal(cli('new', 'demo#50', '--title', 'Guarded task').status, 0);
+  const W = path.join(ROOT, 'worktrees', 'demo-50');
+  const I = path.join(ROOT, 'issues', 'demo-50');
+  const LIB = path.resolve(path.dirname(BIN), '../lib');
+  const refused = (command, cwd = W) => assert.equal(bash(command, cwd).deny, true, `should be refused: ${command}`);
+  const allowed = (command, cwd = W) => assert.equal(bash(command, cwd).deny, false, `should be allowed: ${command} (${bash(command, cwd).reason || ''})`);
+  // Approval under another spelling of the same command.
+  for (const command of ['c\\ig approve demo-50', 'cig ap""prove demo-50', "cig 'approve' demo-50", 'CIG approve demo-50', 'cig --json approve demo-50', 'env -u CLAUDE\\CODE script -qc "c\\ig ap\\prove demo-50" /dev/null']) refused(command);
+  // Codeignite's own code as a one-line script.
+  refused(`node --input-type=module -e "const g=await import('${LIB}/stages.mjs');g.approve({})"`);
+  refused(`node -e "import('${LIB}/pairing.mjs').then(m=>console.log(m.boardKey()))"`);
+  // A push that does not say "git push" plainly, or does not name the task.
+  for (const command of ['git pu""sh -u origin HEAD', 'git pu\\sh', `git -C ${W} -c a=b push`]) refused(command);
+  refused('git push origin --all', REPO);
+  refused("git push origin 'refs/heads/me/*:refs/heads/me/*'", REPO);
+  refused(`GIT_DIR=${REPO}/.git git push origin --mirror`, tmp);
+  // The task's record and proof under another spelling, and the task folder as a whole.
+  for (const command of [`echo '{}' > ${I}/"state.json"`, `echo '{}' > ${I}//state.json`, `echo '{}' > ${I}/./state.json`, `echo x > ${I}/st*.json`, `touch ${I}/evidence/999-lint.json`, `sed --in-place s/a/b/ ${I}/state.json`, `sed -Ei s/a/b/ ${I}/state.json`, `rm -rf ${I}`, `mv ${I} /tmp/x`]) refused(command, WORKSPACE);
+  // The pairing key by a pattern.
+  for (const command of ['cat factory/.board-*', 'cat factory/.b*', "cat factory/.board-k''ey"]) refused(command, WORKSPACE);
+  // GitHub writes the plain rule did not name.
+  for (const command of ['gh pr --repo acme/demo create --fill', 'gh pr ready', 'gh issue close 50 -R acme/demo', 'gh api repos/acme/demo/issues/50 -X PATCH -f body=x', 'gh api repos/acme/demo/pulls -fhead=x -fbase=main', 'gh api repos/acme/demo/git/refs/heads/x --method patch -f sha=abc', "gh api graphql -f query='mutation{addComment(input:{body:\"50\"}){clientMutationId}}'"]) refused(command);
+  // A shell under another spelling of its name, a file tool through a link, and a file tool of another service.
+  assert.equal(decide({ tool_name: 'bash', tool_input: { command: 'cig approve demo-50' }, cwd: W }).deny, true);
+  fs.symlinkSync(I, path.join(tmp, 'link-to-task'));
+  assert.equal(decide({ tool_name: 'Write', tool_input: { file_path: path.join(tmp, 'link-to-task', 'state.json'), content: '{}' }, cwd: WORKSPACE }).deny, true);
+  assert.equal(decide({ tool_name: 'mcp__filesystem__write_file', tool_input: { path: path.join(I, 'state.json'), content: '{}' }, cwd: WORKSPACE }).deny, true);
+  fs.symlinkSync(path.join(ROOT, '.board-key'), path.join(tmp, 'link-to-key'));
+  assert.equal(decide({ tool_name: 'Read', tool_input: { file_path: path.join(tmp, 'link-to-key') }, cwd: WORKSPACE }).deny, true);
+  // A command too long to check is not waved through.
+  refused(`echo ${'x'.repeat(60_000)}`);
+
+  // Ordinary work that only says a guarded word.
+  for (const command of ['git stash push', 'git commit -m "fix: push handler"', 'git log --grep=push', 'git diff -- lib/push.mjs', 'git commit -m "docs: mention cig approve in passing"'.replace('cig approve', 'the approve step'), 'echo $CLAUDECODE', 'grep CODEIGNITE_ROOT lib', 'gh api repos/acme/demo/pulls/50/comments', 'gh api repos/acme/demo/pulls/50/reviews', 'gh api repos/acme/demo/pulls -X GET -f state=open', "gh api graphql -f query='query{viewer{login}}'", 'gh pr view 50 --json comments']) allowed(command);
+  // A file about the key may say its name; where a tool looks is what counts.
+  assert.equal(decide({ tool_name: 'Write', tool_input: { file_path: path.join(WORKSPACE, 'notes.md'), content: 'The key is kept in .board-key.' }, cwd: WORKSPACE }).deny, false);
+
+  // A task whose record cannot be read cannot be checked: nothing goes out meanwhile.
+  assert.equal(cli('new', 'demo#51', '--title', 'Task to damage').status, 0);
+  const file = path.join(ROOT, 'issues', 'demo-51', 'state.json');
+  const good = fs.readFileSync(file, 'utf8');
+  write(file, '{broken');
+  assert.match(bash('git push -u origin HEAD', path.join(ROOT, 'worktrees', 'demo-51')).reason, /The record of demo-51 cannot be read/);
+  write(file, good);
+  // An approval written into the record by hand carries no seal.
+  const forged = JSON.parse(good);
+  Object.assign(forged, { stage: 'approved', approvedSha: sh(path.join(ROOT, 'worktrees', 'demo-51'), 'git rev-parse HEAD'), approvedDraftSha256: null });
+  write(file, JSON.stringify(forged));
+  assert.equal(bash('git push -u origin HEAD', path.join(ROOT, 'worktrees', 'demo-51')).deny, true);
+  write(file, good);
+  // The hook itself: an input that is no record of a call ends quietly instead of failing.
+  for (const input of ['null', '[]', '5', '', 'not json']) {
+    const r = spawnSync('node', [path.resolve(path.dirname(BIN), 'guard.mjs'), 'pre'], { input, encoding: 'utf8' });
+    assert.equal(r.status, 0, `${JSON.stringify(input)}: ${r.stderr}`);
+  }
+  for (const id of ['demo-50', 'demo-51']) assert.equal(cli('archive', id, '--delete-branch').status, 0);
 });

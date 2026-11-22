@@ -8,7 +8,9 @@
 - Use real task data. Missing usage is unavailable, not zero. Energy/carbon values are uncalibrated scenarios; keep assumptions, formulas, sources, and exclusions visible.
 - Preserve the restrained dark interface, explicit readable foregrounds, keyboard focus, and small-screen layout.
 - Change a task inside `withTask(id, …)` and the registry, workflow or `config.json` inside `withSettings(…)` (lib/lock.mjs): load, decide and save under the lock. Write files through lib/store.mjs.
-- The board server thread routes requests only. Work that runs git, gh or another program goes through a job in lib/jobs.mjs on a worker lane (lib/offload.mjs): "local" for this machine, "net" for the network.
+- The board server thread routes requests only. Work that runs git, gh or another program goes through a job in lib/jobs.mjs on a worker lane (lib/offload.mjs): "local" for this machine, "net" for the network, "long" for a job that runs a project's own command.
+- Evidence and approvals are sealed with a key outside the task folder (lib/evidence.mjs `sealOf`). Keep a removed, rewritten or hand-written record detectable, and look at the proof again wherever a task is approved or its pull request recorded.
+- A shared settings file is untrusted: take only the fields lib/share.mjs lists, and show every command it carries before it applies.
 - Escape all external strings rendered into HTML. Keep the board bound to loopback, served only to a paired browser (lib/pairing.mjs), and mutations protected by request tokens. Never put the pairing key in an address, a page or a log.
 - The tool is called Codeignite and its command `codeignite` (short `cig`). `factory` is the earlier name: it stays as an alias, as the `FACTORY_*` variables and the `~/.code-factory` folder stay readable, and it survives in internal names only (`factoryRoot`, the `factory-dark` CSS id). Do not use it in anything a user reads.
 - Read docs/workflow.md for the task engine, docs/calculations.md for footprint semantics, and docs/migration.md before changing stored formats.

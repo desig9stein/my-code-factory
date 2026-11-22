@@ -9,7 +9,7 @@ Use `codeignite help` for all commands. `codeignite next <id>` prints what the c
 5. Implement inside the worktree and commit. Run registered checks with `codeignite run app-42 verify` (or each configured gate name). Evidence is tied to a clean committed tree.
 6. Prove regression coverage using `codeignite regress app-42 --tests <paths> -- <test command>`: it must fail on the base and pass on the fix. Add `--expect-output "<text>"` so the base run only counts when its output shows that text; otherwise a missing import fails the base just as well as the bug does. The command prints the end of the base log so you can check the reason. Use a recorded manual check only where a command cannot demonstrate the behavior.
 7. Write `pr-body.md`, run `codeignite check app-42`, and obtain an independent review. The verifier runs gates with `--as verifier`, checks the claims, and records `codeignite verdict app-42 pass|fail --report <file>` on a clean tree. When the plan lists acceptance criteria, a passing report must have an `Acceptance criteria` section saying how each was checked.
-8. Advance to ready. A human reads the diff, evidence, and draft, then approves in the board or using `codeignite approve app-42` in an interactive terminal. Approval covers the commit and the exact text of `pr-body.md` (or `review.md`); a push or PR is refused once either differs.
+8. Advance to ready. A human reads the diff, evidence, and draft, then approves in the board or using `codeignite approve app-42` in an interactive terminal. Approval covers the commit and the exact text of `pr-body.md` (or `review.md`); a push or PR is refused once either differs. Approval looks again at everything that let the task reach ready: the evidence, the verdict, the pull request text, a clean folder and that the task is not blocked. The count of the evidence records and the approval itself are sealed, so a record that was removed or rewritten, and an approval written into the task's file by hand, are found. A task blocked at the attempt limit is unblocked by a person, in a terminal or on the board.
 9. After authorization, push and create the PR using Git/GitHub tooling, then record its URL with `codeignite pr app-42 <url>`. Codeignite itself does not automatically publish or merge.
 10. Archive finished work using the board or `codeignite archive app-42`. Dirty worktrees are refused. Branch deletion is an explicit CLI option.
 
@@ -74,6 +74,8 @@ Stopping the board (`codeignite board --stop`) ends the sessions it started. A r
 - at the share you set, no new session starts: the run ends with "Agents are paused to keep the share of your plan limit you set aside", the task is listed under "Your turn", and "Run agent" refuses until the window resets;
 - ten points past the share, a running session is interrupted. Just past it, the session may finish its step first, so no work is cut off for a point or two;
 - a window whose reset time has passed no longer counts.
+
+A run reads these settings before every session, so a limit or a brake changed while it runs holds for it. A session whose board was killed is ended before a new run starts in the same folder.
 
 The figure comes from Claude Code. When the last one is older than half an hour, or there is none, Codeignite asks for it before a run starts, with the smallest request there is: one word from the fastest model, no tools, nothing kept. "Ask Claude Code now" on the Settings page does the same. So a run that would start above the share does not start.
 

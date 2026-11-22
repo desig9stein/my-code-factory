@@ -58,6 +58,8 @@
 #factory-dark .fd-caption{font-size:13px;color:var(--fd-muted);margin:12px 0 0}
 #factory-dark .fd-evidence{display:grid;gap:0;margin-top:4px}
 #factory-dark .fd-evidence div{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--fd-line);font-size:14px}
+/* The name of a row keeps its width; the value beside it is what wraps. */
+#factory-dark .fd-evidence div>:first-child{flex:none;max-width:45%}#factory-dark .fd-evidence div>:last-child{min-width:0}
 #factory-dark .fd-pass{color:var(--fd-green)}#factory-dark .fd-warning{color:var(--fd-accent)}
 
 
@@ -137,8 +139,8 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark .fd-bar{margin:16px 0}#factory-dark .fd-search{margin:0;max-width:420px}
 #factory-dark .fd-section{font-size:15px;font-weight:500;margin:30px 0 4px;color:var(--fd-fg)}#factory-dark .fd-section span{color:var(--fd-muted);font-weight:400;margin-left:6px}#factory-dark .fd-section+.fd-caption{margin:0 0 14px}
 #factory-dark .fd-blank{border:1px dashed var(--fd-edge);border-radius:10px;padding:28px 20px;text-align:center;color:var(--fd-muted);font-size:14px}#factory-dark .fd-blank.fd-failed{color:var(--fd-red);text-align:left}
-#factory-dark .fd-badge{display:inline-block;border:1px solid var(--fd-edge);border-radius:999px;padding:1px 9px;font:12px/1.6 ui-monospace,SFMono-Regular,monospace;color:var(--fd-muted);white-space:nowrap}#factory-dark .fd-badge-warn{color:var(--fd-accent);border-color:#5d5340}#factory-dark .fd-badge-ok{color:var(--fd-green);border-color:#46543f}
-#factory-dark .fd-chip{display:inline-block;border-radius:5px;padding:1px 7px;background:#262929;font:12px/1.6 ui-monospace,SFMono-Regular,monospace;color:var(--fd-fg);white-space:nowrap}
+#factory-dark .fd-badge{display:inline-block;border:1px solid var(--fd-edge);border-radius:999px;padding:1px 9px;font:12px/1.6 ui-monospace,SFMono-Regular,monospace;color:var(--fd-muted);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}#factory-dark .fd-badge-warn{color:var(--fd-accent);border-color:#5d5340}#factory-dark .fd-badge-ok{color:var(--fd-green);border-color:#46543f}
+#factory-dark .fd-chip{display:inline-block;border-radius:5px;padding:1px 7px;background:#262929;font:12px/1.6 ui-monospace,SFMono-Regular,monospace;color:var(--fd-fg);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 #factory-dark .fd-label{display:inline-block;border:1px solid var(--fd-line);border-radius:999px;padding:0 8px;font-size:12px;line-height:1.6;color:var(--fd-muted)}
 /* Cards share three row tracks (header, content, footer), so footers line up across a row. */
 #factory-dark .fd-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(290px,100%),1fr));gap:14px}

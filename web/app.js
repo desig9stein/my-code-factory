@@ -12,6 +12,7 @@
   let data = { issues: [], projects: [] }, peek = null, lost = false, selected = null, tab = '', shownTab = 'details', view = 'work', scope = 'task', query = '', pending = null;
   let rates = { ...DEFAULT_ASSUMPTIONS }, object = 'bulb';
   let report = null, reportDay = '', reportPlain = '', reportBusy = false;
+  let setupError = '';
   let setup = null, agentsInfo = null, editing = null, gh = null, ghError = '', ghLoading = false, ghRepo = '', ghQuery = '', projectQuery = '';
   let ghFilter = { who: 'assigned', login: '', state: 'open', label: '' };
   // Mirrors the WHO modes in lib/github.mjs.
@@ -46,12 +47,27 @@
   const STEP_NAMES = { gates: 'checks', ready: 'your review', approved: 'open the PR', 'pr-opened': 'PR opened' };
   const stepName = (stage, id) => data.issues.find(i => i.id === id)?.steps?.find(x => x.stage === stage)?.title || STEP_NAMES[stage] || stage;
   const externalLink = (url, label) => /^https:\/\/github\.com\//i.test(url || '') ? `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer">${escape(label)}</a>` : escape(label);
-  async function post(pathname, body) {
-    const response = await fetch(pathname, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Factory-Token': window.__factoryToken }, body: JSON.stringify(body) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Action failed.');
+  // Reads a board answer. A board that is not running, or an answer that is not the board's, is said in plain words.
+  async function answerOf(request) {
+    let response;
+    try { response = await request; } catch { throw new Error('The board did not answer. It may have been stopped: run "codeignite board" in a terminal, then try again.'); }
+    let result;
+    try { result = await response.json(); } catch { throw new Error(`The board answered with something it should not (status ${response.status}). Reload the page and try again.`); }
+    if (!response.ok) throw new Error(result?.error || 'Action failed.');
     return result;
   }
+  // The same action sent twice while the first is still on its way, as by a double click, is one request.
+  const sending = new Map();
+  function post(pathname, body) {
+    const key = `${pathname} ${JSON.stringify(body)}`;
+    if (!sending.has(key)) sending.set(key, answerOf(fetch(pathname, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Factory-Token': window.__factoryToken }, body: JSON.stringify(body) })).finally(() => sending.delete(key)));
+    return sending.get(key);
+  }
+  // Fields the user typed into and has not sent. A redraw would empty them, so new data waits while one holds text.
+  const typed = new Set();
+  // Only fields that start empty and are sent by a button: a filter keeps its text in a variable and is drawn again with it.
+  document.addEventListener('input', e => { if (e.target.matches?.('[name="path"],[name="url"],[name="title"],[name="about"],#wf-combo-input') && !e.target.closest('dialog')) typed.add(e.target); });
+  const unsent = () => { for (const field of typed) { if (!document.contains(field) || !String(field.value || '').trim()) typed.delete(field); } return typed.size > 0; };
   function show(next) {
     view = next;
     document.querySelectorAll('.fd-nav [data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
@@ -77,6 +93,7 @@
   }
   function checklist(full = false) {
     if (!served) return '';
+    if (setupError) return `<p class="fd-warning">The setup could not be checked: ${escape(setupError)}</p><div class="fd-actions"><button class="fd-btn" type="button" data-retry-setup>Check again</button></div>`;
     if (!setup) return '<p class="fd-caption">Checking setup…</p>';
     const row = (ok, text, fix, act = '') => `<li><span class="${ok ? 'fd-pass' : 'fd-warning'}">${ok ? '✓' : '!'}</span> ${escape(text)}${ok || !fix ? '' : `<br><span class="fd-caption">${escape(fix)}</span>`}${ok || !act ? '' : `<div class="fd-actions">${act}</div>`}</li>`;
     const rows = setupRows();
@@ -98,14 +115,16 @@
   }
   async function loadSetup() {
     if (!served) return;
+    // The two are asked for apart: the agent settings still show when the setup cannot be read.
+    try { agentsInfo = await answerOf(fetch('/api/agents')); } catch (error) { if (!agentsInfo) notice(error.message, true); }
     try {
-      const response = await fetch('/api/setup');
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Could not read the setup state.');
-      setup = result;
-      const agents = await fetch('/api/agents');
-      if (agents.ok) agentsInfo = await agents.json();
-    } catch (error) { notice(error.message, true); return; }
+      setup = await answerOf(fetch('/api/setup'));
+      setupError = '';
+    } catch (error) {
+      setupError = error.message;
+      renderSettings();
+      return;
+    }
     setupAttention(); renderStart();
     if (document.querySelector('dialog[open]')) return;
     renderProjects(); renderSettings();
@@ -213,6 +232,7 @@
   let mapSel = null, mapMode = 'explore';
   // True while newer data waits for the user to leave a field, a log or a dialog.
   let paused = false;
+  let skippedSaid = '';
   // Buttons that open an agent session on the task, with the first message filled in.
   function launch(i, primary = true) {
     if (!i.prompt || !i.worktree) return '';
@@ -236,7 +256,7 @@
     const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit', 'timeout', 'usage', 'budget'].includes(r.reason);
     const last = r ? `<p class="${failed ? 'fd-warning' : 'fd-caption'}">The last run ended ${r.endedAt ? `${agoShort(r.endedAt)} ago` : 'without a record of when'} after ${plural(r.sessions, 'session')}: ${escape(r.detail || 'no reason was recorded.')}</p>${r.denials?.length && !/Refused commands/.test(r.detail || '') ? `<p class="fd-caption">Refused commands: ${r.denials.map(d => `<code>${escape(d)}</code>`).join(', ')}. If the agent needs one, allow it for this project under Projects, Edit.</p>` : ''}${r.limit ? `<p class="fd-warning">Your account's usage limit answered "${escape(r.limit.status)}"${r.limit.resetsAt ? `; it resets ${escape(new Date(r.limit.resetsAt).toLocaleString())}` : ''}.</p>` : ''}${r.said ? `<details class="fd-launch-more fd-keep"${kept('last-message', i.id)}><summary>The agent's last message</summary><pre class="fd-now-doc">${escape(r.said)}</pre></details>` : ''}` : '';
     const mode = data.projects.find(p => p.key === i.repo)?.agent?.permission || data.agents?.permission || '';
-    return `${last}<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-run-agent>${r ? 'Run the agent again' : 'Run agent'}</button>${log}</div><p class="fd-caption fd-explain">Starts ${escape(data.agents?.label || 'your coding agent')} in the background with your own login, one fresh session per step, until the task needs you.${mode ? ` Permission mode: ${escape(data.agents?.modes?.[mode] || mode)}.` : ''} Change the mode and the limits under Settings.</p>${own('Or open a session yourself')}`;
+    return `${last}<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-run-agent>${r ? 'Run the agent again' : 'Run agent'}</button>${log}</div><p class="fd-caption fd-explain">Starts ${escape(data.agents?.label || 'your coding agent')} in the background with your own login, one fresh session per step, until the task needs you. Change the mode and the limits under Settings.</p>${mode ? `<p class="fd-caption">Permission mode: ${escape(data.agents?.modes?.[mode] || mode)}.</p>` : ''}${own('Or open a session yourself')}`;
   }
   const canDecide = (i) => Boolean(served && i.stage === 'ready' && !i.blocked && i.approvalKey);
   // Keeps the decision and its commit on screen while the user reads the task.
@@ -266,13 +286,15 @@
       const pr = i.prUrl ? externalLink(i.prUrl, 'Open the pull request') : '';
       const asked = f.fetchedAt ? `Asked GitHub ${agoShort(f.fetchedAt)} ago; it is asked only when you press the button.` : 'GitHub has not answered yet.';
       const again = served ? '<button class="fd-btn" type="button" data-check-pr>Ask GitHub now</button>' : '';
-      const problem = f.error ? `<p class="fd-warning">${escape(f.error)}</p>` : '';
+      const moved = f.movedOnGitHub ? '<p class="fd-warning">The pull request on GitHub is at a commit Codeignite did not push, such as a suggestion committed there. The checks shown are that commit\'s.</p>' : '';
+      const more = f.omitted && (f.omitted.notes || f.omitted.checks) ? `<p class="fd-caption">Only the newest are shown here: ${[f.omitted.notes ? plural(f.omitted.notes, 'older note') : '', f.omitted.checks ? plural(f.omitted.checks, 'more check') : ''].filter(Boolean).join(' and ')} on the pull request.</p>` : '';
+      const problem = `${f.error ? `<p class="fd-warning">${escape(f.error)}</p>` : ''}${moved}${more}`;
       const checks = f.failed.length ? `<p class="fd-now-label">Checks that failed:</p><ul class="fd-now-list">${f.failed.map(c => `<li>${c.url ? externalLink(c.url, c.name) : escape(c.name)}</li>`).join('')}</ul>` : '';
       const notes = f.notes.length ? `<p class="fd-now-label">What reviewers wrote:</p><ul class="fd-now-list fd-feedback">${f.notes.map(n => `<li><strong>${escape(n.author)}</strong> <span class="fd-muted">${escape(n.kind)}${n.path ? ` · ${escape(n.path)}${n.line ? `:${escape(n.line)}` : ''}` : ''}</span>${n.body ? `<br>${escape(n.body)}` : ''}</li>`).join('')}</ul>` : '';
       if (f.state === 'merged') return panel('done', 'The pull request is merged', `<p>${pr}${pr ? '. ' : ''}Nothing more happens here. Archive the task when you are done with it.</p>${served ? '<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-action="archive">Archive task</button></div>' : ''}`);
       if (f.state === 'closed') return panel('done', 'The pull request was closed without merging', `<p>${pr}${pr ? '. ' : ''}Archive the task, or reopen the pull request on GitHub to continue.</p>${served ? '<div class="fd-actions"><button class="fd-btn" type="button" data-action="archive">Archive task</button></div>' : ''}`);
       if (f.needsYou) return panel('you', f.failed.length ? 'the pull request\'s checks failed' : 'the pull request has feedback', `${checks}${notes}${problem}<div class="fd-actions">${served ? '<button class="fd-btn fd-primary" type="button" data-send-feedback>Send to the agent</button>' : ''}${again}</div><p class="fd-caption fd-explain">Sending returns the task to the agent with the text you confirm; you can change it first. The fix goes through the checks, the verifier and your approval before the pull request is updated. Nothing written on GitHub reaches the agent unless you send it.</p><p class="fd-caption">${pr}${pr ? '. ' : ''}${asked}</p>`);
-      const status = f.pending ? `${plural(f.pending, 'check')} still running${f.passed ? `, ${f.passed} passed` : ''}.` : f.passed ? `All ${plural(f.passed, 'check')} passed.` : 'No checks are reported for it.';
+      const status = f.outdated ? 'This answer is from before the pull request was last updated, so the checks of the new commit are not known yet.' : f.pending ? `${plural(f.pending, 'check')} still running${f.passed ? `, ${f.passed} passed` : ''}.` : f.passed ? `All ${plural(f.passed, 'check')} passed.` : 'No checks are reported for it.';
       return panel('done', 'The pull request is open', `<p>${status}${f.approvals ? ` ${plural(f.approvals, 'approval')}.` : ''} ${f.decision === 'REVIEW_REQUIRED' ? 'It waits for a review.' : ''} Press "Ask GitHub now" to see whether that changed.</p>${problem}<div class="fd-actions">${again}${served ? '<button class="fd-btn fd-ghost" type="button" data-action="archive">Archive task</button>' : ''}</div><p class="fd-caption">${pr}${pr ? '. ' : ''}${asked}</p>`);
     }
     if (i.stage === 'pr-opened' || i.stage === 'posted') {
@@ -379,6 +401,9 @@
   }
   // The diff of a commit does not change, so a data load redraws it without asking again or flashing.
   let diffShown = { key: '', html: '' };
+  // A file the user closed stays closed when the kept diff is drawn again.
+  document.addEventListener('toggle', e => { if (e.target.closest?.('#diff') && diffShown.key) diffShown.html = $('diff').innerHTML; }, true);
+  document.addEventListener('click', e => { if (e.target.closest('[data-retry-setup]')) { setupError = ''; setup = null; renderSettings(); loadSetup(); } });
   async function renderChanges(i) {
     const diffKey = `${i.id}:${i.head}`;
     if (diffShown.key === diffKey) { $('diff').innerHTML = diffShown.html; return; }
@@ -458,11 +483,11 @@
   }
   function agentsSection() {
     if (!served) return '';
-    if (!agentsInfo) return '<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption">Loading…</p>';
+    if (!agentsInfo) return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption">${setupError ? 'The agent settings could not be read either.' : 'Loading…'}</p>`;
     const { settings: s, harness: h, limits } = agentsInfo;
     const options = (list, value) => list.map(o => `<option value="${escape(o.id)}"${o.id === value ? ' selected' : ''}>${escape(o.label)}</option>`).join('');
     const explain = (list) => `<dl class="fd-agent-modes">${list.map(o => `<dt>${escape(o.label)}</dt><dd>${escape(o.about)}</dd>`).join('')}</dl>`;
-    return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption fd-explain">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. ${h.version ? `Found: ${escape(h.version)}.` : ''} These settings stay on this machine and are not part of the team export.</p>${h.version ? '' : `<p class="fd-warning">${escape(h.label)} was not found on this machine, so "Run agent" cannot start a session. ${escape(h.install)}</p>`}
+    return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption fd-explain">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. These settings stay on this machine and are not part of the team export.</p>${h.version ? `<p class="fd-caption">Found: ${escape(h.version)}.</p>` : ''}${h.version ? '' : `<p class="fd-warning">${escape(h.label)} was not found on this machine, so "Run agent" cannot start a session. ${escape(h.install)}</p>`}
 <form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label>Minutes per session, at most<input name="sessionMinutes" type="number" required min="${limits.sessionMinutes[0]}" max="${limits.sessionMinutes[1]}" value="${s.sessionMinutes}"></label><label>Pause agents at this share of my plan limit, in %<input name="usageCap" type="number" required min="${limits.usageCap[0]}" max="${limits.usageCap[1]}" value="${s.usageCap}"></label><label>Pause agents at this estimated cost a day, in $<input name="dailyBudget" type="number" required min="${limits.dailyBudget[0]}" max="${limits.dailyBudget[1]}" value="${s.dailyBudget}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
 ${planLine(agentsInfo.planUsage, s.usageCap)}${spendLine(agentsInfo.spend, s.dailyBudget)}<details class="fd-launch-more fd-keep"${kept('agent-choices', 'settings')}><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption fd-explain">The share of your plan limit is a brake: at that share no new agent session starts, and ten points past it a running session is interrupted. 0 switches it off. The figure comes from Claude Code; it is asked for before a run when the last one is older than half an hour, with one very small request. The daily cost cap works for every kind of account: it adds up what Claude Code estimates for each session of the day. 0 switches it off. A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
   }
@@ -1128,19 +1153,25 @@ ${planLine(agentsInfo.planUsage, s.usageCap)}${spendLine(agentsInfo.spend, s.dai
     // News is told even while the page holds back a redraw for a field in use.
     tellNews(next);
     // Keep drafts and open explanations stable while the user interacts.
-    if (data.stamp && (document.querySelector('dialog[open]') || [...document.querySelectorAll('#detail .fd-body details[open]:not(.fd-keep)')].some(el => el.offsetParent !== null) || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) { paused = true; tick(); return; }
+    if (data.stamp && (document.querySelector('dialog[open]') || [...document.querySelectorAll('#detail .fd-body details[open]:not(.fd-keep)')].some(el => el.offsetParent !== null) || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName) || unsent())) { paused = true; tick(); return; }
     paused = false;
     data = next;
     if (!data.issues.some(i => i.id === peek)) peek = null;
     // Opens on the task that waits for the user, when there is one.
     if (!data.issues.some(i => i.id === selected)) selected = (data.issues.find(i => i.stage === 'ready' && !i.blocked) || data.issues.find(needsYou) || data.issues[0])?.id || null;
     const skipped = data.skipped || [];
-    if (skipped.length) notice(`${skipped.length} task${skipped.length === 1 ? '' : 's'} could not be shown. ${skipped.map(x => `${x.id}: ${x.reason}`).join(' ')}`, true);
+    const skippedNow = skipped.map(x => `${x.id}: ${x.reason}`).join(' ');
+    // Said when the list changes, not on every load: it would come back after "Dismiss" and cover the result of an action.
+    if (skipped.length && skippedNow !== skippedSaid) notice(`${skipped.length} task${skipped.length === 1 ? '' : 's'} could not be shown. ${skippedNow}`, true);
+    skippedSaid = skippedNow;
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()}`;
     // A redraw replaces the focused element; the one that stands for the same thing gets focus back.
     const held = document.activeElement, holder = held?.closest?.('section[id], aside[id], article[id]');
     const key = held && holder && ['task', 'peek', 'tab', 'node', 'edit', 'mode', 'openTask', 'action', 'unblock', 'createPr', 'postReview', 'open', 'runAgent', 'stopAgent', 'checkPr', 'sendFeedback'].find(k => held.dataset?.[k] !== undefined);
+    // The heading of a fold stands for the fold: the mark is on the fold itself.
+    const fold = held?.tagName === 'SUMMARY' ? held.parentElement?.dataset : null;
     render();
+    if (fold?.fold !== undefined && !document.contains(held)) document.querySelector(`details[data-fold="${CSS.escape(fold.fold)}"][data-fold-owner="${CSS.escape(fold.foldOwner || '')}"] > summary`)?.focus({ preventScroll: true });
     if (key && !document.contains(held)) holder.querySelector(`[data-${key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)}="${CSS.escape(held.dataset[key])}"]`)?.focus({ preventScroll: true });
     if (!hashReady) { hashReady = true; if (location.hash.length > 1) applyHash(); else syncHash(); }
     if (view === 'github') { if (gh) loadGithub(); else renderGithub(); }
