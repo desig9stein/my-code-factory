@@ -28,10 +28,10 @@
     box.innerHTML = message ? `<span>${problem ? 'Problem: ' : ''}${escape(message)}${link ? ` ${externalLink(link.url, link.text)}` : ''}</span><button type="button" class="fd-link" id="notice-close">Dismiss</button>` : '';
   };
   // Explanations are one switch for every page: off shows status and actions only, on adds the sentences that explain them.
-  let explaining = false;
-  try { explaining = localStorage.getItem('factory-explain') === 'on'; } catch { /* The choice lasts for this visit only. */ }
+  let explaining = false, explainChosen = false;
+  try { const kept = localStorage.getItem('factory-explain'); explainChosen = kept === 'on' || kept === 'off'; explaining = kept === 'on'; } catch { /* The choice lasts for this visit only. */ }
   const applyExplain = () => { document.body.classList.toggle('fd-explain-on', explaining); $('explain').setAttribute('aria-pressed', explaining); };
-  $('explain').onclick = () => { explaining = !explaining; try { localStorage.setItem('factory-explain', explaining ? 'on' : 'off'); } catch { /* Kept for this visit. */ } applyExplain(); };
+  $('explain').onclick = () => { explaining = !explaining; explainChosen = true; try { localStorage.setItem('factory-explain', explaining ? 'on' : 'off'); } catch { /* Kept for this visit. */ } applyExplain(); };
   applyExplain();
   // Sections of a task that open on demand stay open across data loads.
   const openFolds = new Set();
@@ -55,6 +55,7 @@
     document.querySelectorAll('.fd-nav [data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     // The work queue has its own bar with the layout switch and New task; every other page starts with its own heading.
     $('toolbar').hidden = view !== 'work';
+    renderStart();
     syncHash();
     ['work', 'github', 'report', 'map', 'projects', 'workflow', 'activity', 'metrics', 'settings'].forEach(id => { $(id).hidden = id !== view; });
     applyQueueMode();
@@ -103,7 +104,7 @@
       const agents = await fetch('/api/agents');
       if (agents.ok) agentsInfo = await agents.json();
     } catch (error) { notice(error.message, true); return; }
-    setupAttention();
+    setupAttention(); renderStart();
     if (document.querySelector('dialog[open]')) return;
     renderProjects(); renderSettings();
     if (!task()) renderDetail();
@@ -734,7 +735,7 @@
     const when = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
     $('activity').innerHTML = '<h2 class="fd-h1">Activity</h2><p class="fd-desc">Every step the tasks in flight have passed, newest first.</p>' + (events.map(h => `<div class="fd-project"><p><button class="fd-link" data-open-task="${escape(h.task.id)}">${escape(h.task.repo)} / ${h.task.kind === 'review' ? 'PR ' : ''}#${escape(h.task.issue)}</button> · <strong>${escape(h.task.steps?.find(x => x.stage === h.stage)?.title || h.stage)}</strong> <span class="fd-caption" title="${escape(h.at)}">${escape(when(h.at))}</span></p>${h.note ? `<p>${escape(h.note)}</p>` : ''}</div>`).join('') || '<p class="fd-blank">Nothing has happened yet. Start a task from GitHub issues.</p>');
   }
-  function render() { renderQueue(); renderBoard(); applyQueueMode(); renderDetail(); renderMap(); renderProjects(); renderSettings(); renderActivity(); renderMetrics(); tick(); }
+  function render() { renderQueue(); renderBoard(); applyQueueMode(); renderDetail(); renderMap(); renderProjects(); renderSettings(); renderActivity(); renderMetrics(); renderStart(); tick(); }
   // On a small screen the queue and the detail are separate screens.
   const showPane = (pane) => { document.body.dataset.pane = pane; };
   // Opens the confirm dialog with a button that names the action.
@@ -1010,6 +1011,41 @@
   $('copy-command').onclick = async () => {
     try { await navigator.clipboard.writeText($('new-command').textContent); notice('Task command copied. Run it in your terminal.'); }
     catch { notice('Clipboard unavailable. Select and copy the command shown in the dialog.'); }
+  };
+  // ----- first steps -----
+  // A new user sees what to do first, each step ticked from what really happened on this machine, and reads
+  // the explanations until their first approval. Someone who has done the steps sees none of this.
+  let startHidden = false;
+  try { startHidden = localStorage.getItem('factory-start') === 'hidden'; } catch { /* Shown for this visit. */ }
+  function startSteps() {
+    const f = data.firsts || {}, known = Boolean(setup);
+    const tools = known ? setup.checks.filter(c => !c.ok) : [];
+    const agentTask = data.issues.find(i => !needsYou(i) && !['pr-opened', 'posted'].includes(i.stage));
+    const review = data.issues.find(i => i.stage === 'ready' && !i.blocked);
+    return [
+      { done: known && !tools.length, wait: !known, title: 'The tools are installed', todo: tools.length ? `Still missing: ${tools.map(c => c.name).join(', ')}.` : 'Node.js, Git, the GitHub CLI with a login, and Claude Code.', act: tools.length ? '<button class="fd-btn" type="button" data-start-view="settings">See what is missing</button>' : '' },
+      { done: known && setup.hooksInstalled, wait: !known, title: 'The guard hooks are installed', todo: 'They stop an agent from pushing or opening a pull request before you approve. Run this in a terminal:', code: 'factory hooks --install' },
+      { done: data.projects.some(p => p.gates.length), title: 'A project is registered with a check', todo: data.projects.length ? 'Your projects have no check yet. A check is a command such as the test run; every change must pass it.' : 'A project is one of your repositories. Its check is a command such as the test run; every change must pass it.', act: '<button class="fd-btn" type="button" data-start-view="projects">Open Projects</button>' },
+      { done: Boolean(f.task), title: 'Your first task is started', todo: 'A task is one GitHub issue that Codeignite takes through its steps.', act: data.projects.length ? '<button class="fd-btn" type="button" data-start-new>Start a task</button><button class="fd-btn fd-ghost" type="button" data-start-view="github">Pick from your GitHub issues</button>' : '' },
+      { done: Boolean(f.run), title: 'An agent has worked on a task', todo: 'Open a task and press "Run agent". It works step by step and stops when the task needs you.', act: agentTask ? `<button class="fd-btn" type="button" data-open-task="${escape(agentTask.id)}">Open ${escape(agentTask.id)}</button>` : '' },
+      { done: Boolean(f.approval), title: 'You approved a change', todo: review ? 'A task waits for your review. Read the change and the proof, then approve or send it back.' : 'When the checks and the verifier pass, the task comes to you. You read the change and the proof, then approve or send it back.', act: review ? `<button class="fd-btn fd-primary" type="button" data-open-task="${escape(review.id)}">Review ${escape(review.id)}</button>` : '' },
+    ];
+  }
+  function renderStart() {
+    const steps = served && data.stamp ? startSteps() : [];
+    const open = steps.filter(s => !s.done).length;
+    // Explanations are on for someone still finding their way, unless they chose otherwise.
+    if (!explainChosen && data.stamp) { explaining = served && !data.firsts?.approval; applyExplain(); }
+    $('start').hidden = view !== 'work' || startHidden || !open;
+    if ($('start').hidden) { $('start').innerHTML = ''; return; }
+    const next = steps.find(s => !s.done && !s.wait);
+    $('start').innerHTML = `<header><h2>Get started <span class="fd-muted">${steps.length - open} of ${steps.length} done</span></h2><button type="button" class="fd-link" data-start-hide>Hide this</button></header>${steps.some(s => s.done) ? `<p class="fd-start-donelist"><span class="fd-pass">✓ Done:</span> ${steps.filter(s => s.done).map(s => escape(s.title)).join(' · ')}</p>` : ''}<ol>${steps.filter(s => !s.done).map(s => `<li class="${s === next ? 'fd-start-next' : ''}"><span class="fd-start-mark" aria-hidden="true"></span><div><strong>${escape(s.title)}</strong><span class="sr-only">${s.wait ? ' (checking)' : ' (to do)'}</span>${s === next ? `<p>${escape(s.todo)}</p>${s.code ? `<pre>${escape(s.code)}</pre>` : ''}` : ''}${s.act ? `<div class="fd-actions">${s.act}</div>` : ''}</div></li>`).join('')}</ol><p class="fd-caption">${explainChosen ? '' : 'Explanations are shown on every page while you get started. The "? Explain" switch at the top turns them off and on. '}How the steps of a task work is in docs/workflow.md of the Codeignite folder, and "Words and shortcuts" at the bottom left explains the terms.</p>`;
+  }
+  $('start').onclick = e => {
+    if (e.target.closest('[data-start-hide]')) { startHidden = true; try { localStorage.setItem('factory-start', 'hidden'); } catch { /* Hidden for this visit. */ } renderStart(); notice('The first steps are hidden. Settings shows the same checks.'); return; }
+    const to = e.target.closest('[data-start-view]'); if (to) return show(to.dataset.startView);
+    if (e.target.closest('[data-start-new]')) return openNew();
+    const open = e.target.closest('[data-open-task]'); if (open) openTask(open.dataset.openTask);
   };
   // ----- notifications -----
   // The tab title always counts the tasks that wait for you. A notification of the system is an extra the user

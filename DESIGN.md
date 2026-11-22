@@ -196,6 +196,8 @@ Controls in a row share one height of 40px. Buttons are 34px. Page gutters are 2
 ### Named Rules
 **The Status First Rule.** A screen leads with what is happening and the one action that fits it. Text that explains a control carries the class `fd-explain` (page descriptions use `fd-desc`) and shows only while "? Explain" in the top bar is on. A caption that reports state, such as a count, a time or a failure, is never marked this way.
 
+**The First Steps Rule.** Guidance for a new user is a list of steps ticked from recorded facts (a tool found, a task started, an approval given), never from clicks, and it leaves when the steps are done or the user hides it. No overlay points at controls.
+
 **The Fold Rule.** Long recorded text (documents, logs, passed runs) sits in a fold (`fd-fold`) that opens on demand and stays open across data loads. A failure is shown open.
 
 **The One Place Rule.** A control lives on the page it belongs to. "New task" is on the Work queue, machine settings are on Settings, and no page repeats another page's controls.
