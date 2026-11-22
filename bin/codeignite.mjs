@@ -677,7 +677,8 @@ const commands = {
     loadRegistry();
     const server = await startServer();
     // "board --stop" and Ctrl-C end the agent sessions this server started; they would otherwise run on unseen.
-    for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { server.stopAgents(); process.exit(0); });
+    // A closed terminal ends the board like the others do.
+    for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.once(signal, () => { server.stopAgents(); process.exit(0); });
     fs.writeFileSync(path.join(factoryRoot(), `.board-${boardPort()}.pid`), String(process.pid));
     console.log('The board answers only a paired browser. Run "codeignite board" in another terminal to open it paired.');
     console.log(`Board at http://127.0.0.1:${boardPort()}/`);
@@ -745,7 +746,6 @@ const commands = {
     let shown = 0;
     const record = await runTask(id, {
       control,
-      settings,
       onChange: (run) => {
         for (const session of run.sessions.slice(shown)) console.log(`Session ${++shown}: stage "${session.stage}"${session.model ? `, model ${session.model}` : ''}`);
       },

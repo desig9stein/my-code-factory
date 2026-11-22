@@ -1,5 +1,6 @@
 // Covers the runs Codeignite starts by itself: settings, what a session may do, the stage loop and the queue.
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -456,3 +457,125 @@ test('agents pause at the cost the user allows per day, whatever the account', a
   fs.rmSync(spendFile, { force: true });
 });
 
+
+test('a session that leaves a command behind, repeats its result or prints an endless line still ends as one session', async () => {
+  saveAgentSettings({ usageCap: 0, dailyBudget: 0, maxSessions: 12 });
+  const spendFile = path.join(ROOT, 'cache', 'spend.json');
+  fs.rmSync(spendFile, { force: true });
+  // A background command keeps the session's output open; the run does not wait for it, and ends it.
+  process.env.FAKE_AGENT_CHILD = path.join(tmp, 'left-behind.pid');
+  behave('background');
+  const started = Date.now();
+  const left = await runTask(task(70, 'gates'));
+  assert.deepEqual([left.reason, left.sessions.length, left.sessions[0].ok], ['your-turn', 1, true]);
+  assert.ok(Date.now() - started < 15_000, `the run took ${Date.now() - started} ms`);
+  const pid = Number(fs.readFileSync(process.env.FAKE_AGENT_CHILD, 'utf8'));
+  await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 'the command left behind to end');
+  // Two result lines are one session's cost.
+  fs.rmSync(spendFile, { force: true });
+  behave('twice');
+  await runTask(task(71, 'gates'));
+  assert.deepEqual([spendToday().sessions, spendToday().usd.toFixed(2)], [1, '0.01']);
+  // A line of nine megabytes is dropped; the events after it are read as usual.
+  behave('longline');
+  const long = await runTask(task(72, 'gates'));
+  assert.deepEqual([long.reason, long.sessions[0].ok], ['your-turn', true]);
+  // A session ended by a signal says so.
+  behave('silent');
+  assert.match((await runTask(task(73, 'gates'))).detail, /It exited with code 3 and reported no result/);
+});
+
+test('a usage figure is kept when the request for it dies, and a reading without a number is not "nothing used"', async () => {
+  const usageFile = path.join(ROOT, 'cache', 'plan-usage.json');
+  saveAgentSettings({ usageCap: 80 });
+  const high = { at: new Date().toISOString(), windows: [{ id: 'seven_day', used: 0.97, resetsAt: Math.round(Date.now() / 1000) + 86_400 }] };
+  write(usageFile, JSON.stringify(high));
+  // The request starts and dies: nothing was learned, so the figure that pauses agents stays.
+  process.env.FAKE_PROBE = 'crash';
+  assert.equal((await checkUsage()).windows[0].used, 0.97);
+  assert.equal(planUsage().windows[0].used, 0.97);
+  delete process.env.FAKE_PROBE;
+  // Several askers at once share one request.
+  const probes = path.join(tmp, 'probes-shared.txt');
+  process.env.FAKE_AGENT_PROBES = probes;
+  process.env.FAKE_USAGE = '0.4';
+  await Promise.all(Array.from({ length: 6 }, () => checkUsage()));
+  assert.equal(fs.readFileSync(probes, 'utf8').trim().split('\n').length, 1);
+  delete process.env.FAKE_AGENT_PROBES;
+  delete process.env.FAKE_USAGE;
+  // A window without a number is no reading.
+  process.env.FAKE_USAGE_NULL = '1';
+  behave('advance');
+  fs.rmSync(usageFile, { force: true });
+  await runTask(task(74, 'gates'));
+  delete process.env.FAKE_USAGE_NULL;
+  assert.deepEqual([planUsage().windows, planUsage().silent], [[], true]);
+  // A file edited by hand does not break the brake or the start of a run.
+  write(usageFile, JSON.stringify({ at: new Date().toISOString(), windows: [null, 5, { id: 'five_hour' }, { id: 'five_hour', used: 0.2 }] }));
+  assert.deepEqual(planUsage().windows, [{ id: 'five_hour', used: 0.2 }]);
+  assert.equal(overCap(), null);
+  write(usageFile, JSON.stringify({ at: 'not a date', windows: [] }));
+  assert.equal(planUsage(), null);
+  // A figure a month old does not refuse a start: the run asks again first. Without a reset time the text does not say "after that".
+  write(usageFile, JSON.stringify({ at: new Date(Date.now() - 30 * 86_400_000).toISOString(), windows: [{ id: 'seven_day', used: 0.99, resetsAt: null }] }));
+  assert.match(overCap().text, /Ask for the figure again under Settings, or change the share there\.$/);
+  process.env.FAKE_USAGE = '0.1';
+  const runner = createRunner();
+  const id = task(75, 'gates');
+  assert.equal(runner.start(id), 'running');
+  await until(() => readRun(id).status === 'ended', 'the run to end');
+  assert.equal(readRun(id).reason, 'your-turn');
+  runner.close();
+  delete process.env.FAKE_USAGE;
+  fs.rmSync(usageFile, { force: true });
+});
+
+test('a run follows settings changed meanwhile, ends a session an earlier board left behind, and a waiting run survives bad settings', async () => {
+  saveAgentSettings({ usageCap: 0, dailyBudget: 0, maxSessions: 12, maxConcurrent: 1 });
+  // The limit is lowered after the first session: the run stops there and not after all three stages.
+  behave('advance');
+  let lowered = false;
+  const run = await runTask(task(80, 'triage'), { onChange: (record) => { if (!lowered && record?.sessions?.[0]?.endedAt) { lowered = true; saveAgentSettings({ maxSessions: 1 }); } } });
+  assert.deepEqual([run.reason, run.sessions.length], ['limit', 1]);
+  saveAgentSettings({ maxSessions: 12 });
+  assert.throws(() => saveAgentSettings(null), /must be a list of settings/);
+  // A session whose supervisor died is still at work in the folder: it is ended before a new run starts there.
+  const orphan = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+  orphan.unref();
+  const id = task(81, 'gates');
+  write(path.join(ROOT, 'issues', id, 'agent-run.json'), JSON.stringify({ id, status: 'running', supervisor: 2 ** 22 + 777, beat: new Date().toISOString(), startedAt: new Date().toISOString(), session: { pid: orphan.pid, cmd: path.basename(process.execPath) }, sessions: [] }));
+  assert.equal((await runTask(id)).reason, 'your-turn');
+  await until(() => { try { process.kill(orphan.pid, 0); return false; } catch { return true; } }, 'the left-behind session to end');
+  // A process of another program under a recorded number is left alone.
+  const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+  const id2 = task(82, 'gates');
+  write(path.join(ROOT, 'issues', id2, 'agent-run.json'), JSON.stringify({ id: id2, status: 'running', supervisor: 2 ** 22 + 778, startedAt: new Date().toISOString(), session: { pid: other.pid, cmd: 'claude' }, sessions: [] }));
+  await runTask(id2);
+  assert.equal(process.kill(other.pid, 0), true);
+  process.kill(-other.pid, 'SIGKILL');
+  // A waiting record without a sign of life is not a waiting run.
+  write(path.join(ROOT, 'issues', id2, 'agent-run.json'), JSON.stringify({ id: id2, status: 'queued', supervisor: process.pid, startedAt: new Date().toISOString(), sessions: [] }));
+  assert.equal(readRun(id2).reason, 'interrupted');
+  // Settings that cannot be read while a run waits: the waiting run ends with the reason, and nothing is thrown.
+  behave('hang');
+  const runner = createRunner();
+  const [a, b, c] = [task(83, 'implement'), task(84, 'implement'), task(85, 'implement')];
+  assert.deepEqual([runner.start(a), runner.start(b)], ['running', 'queued']);
+  assert.equal(typeof readRun(b).beat, 'string');
+  // Room for one more is used at once when the user raises the number.
+  saveAgentSettings({ maxConcurrent: 2 });
+  runner.kick();
+  assert.deepEqual([runner.active().sort(), runner.queued()], [[a, b], []]);
+  assert.equal(runner.start(c), 'queued');
+  const config = path.join(ROOT, 'config.json');
+  const kept = fs.readFileSync(config, 'utf8');
+  await until(() => readRun(a)?.sessions[0]?.sessionId, 'the session to start');
+  write(config, '{broken');
+  runner.stop(a);
+  await until(() => readRun(c)?.status === 'ended', 'the waiting run to end');
+  assert.match(readRun(c).detail, /^The agent session failed\./);
+  write(config, kept);
+  runner.close();
+  await until(() => runner.active().length === 0, 'the runs to end');
+  saveAgentSettings({ usageCap: 80, maxConcurrent: 2 });
+});
