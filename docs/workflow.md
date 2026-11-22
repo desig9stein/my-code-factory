@@ -50,6 +50,8 @@ A run works like this:
 
 The record of the last run is `agent-run.json` in the task's data folder, and `agent.log` beside it holds what the agent said and the names of the tools it used. As in the activity record, a shell command is reduced to its program name. Token counts come from the session files Claude Code writes, as for a session you start yourself; the cost a session reports is shown as reported and is an estimate by Claude Code, not a bill.
 
+A task whose run ended without reaching your review is listed under "Your turn" as "agent stopped", until someone works on it again. The tab title shows how many tasks wait for you, and "Notifications" on the Settings page adds a notification of the system for each task that newly needs you while the board's tab is not in front. The choice is kept in the browser; the board must be open in a tab.
+
 Stopping the board (`factory board --stop`) ends the sessions it started. A run that was cut off that way reads "The board stopped while the agent was running"; start it again to continue from the task's current step.
 
 ### Agent settings
