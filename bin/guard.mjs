@@ -20,7 +20,9 @@ function staleBoardFile() {
 }
 let input = {};
 try {
-  input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
+  const given = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
+  // Anything but a record of the call is treated as an empty one.
+  input = given && typeof given === 'object' && !Array.isArray(given) ? given : {};
 } catch {
   input = {};
 }
