@@ -18,6 +18,7 @@ import { factoryRoot, issueDir, subdirOf, workspace, worktreesDir } from '../lib
 import { buildGraph, coverage, detectLinks, reach } from '../lib/graph.mjs';
 import { factoryMetrics } from '../lib/metrics.mjs';
 import { withTask } from '../lib/lock.mjs';
+import { readKey } from '../lib/pairing.mjs';
 import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
 import { dayFacts, writePlainReport } from '../lib/report.mjs';
@@ -138,6 +139,19 @@ function issueMarkdown(issue) {
     .map((c) => `### ${c.author?.login || 'unknown'} on ${c.createdAt}\n\n${c.body}`)
     .join('\n\n');
   return `# #${issue.number} ${issue.title}\n\n- URL: ${issue.url || 'n/a'}\n- State: ${issue.state || 'n/a'}\n- Author: ${issue.author?.login || 'n/a'}\n- Labels: ${labels}\n- Snapshot: ${new Date().toISOString()}\n\n## Body\n\n${issue.body || ''}\n\n## Comments\n\n${comments || 'None.'}\n`;
+}
+
+// Asks the running board for a one-time link that pairs a browser with it; null when the board refuses or is not paired at all.
+async function pairingLink(url) {
+  const key = readKey();
+  if (!key) return null;
+  try {
+    const response = await fetch(`${url}api/pair/start`, { method: 'POST', headers: { 'X-Factory-Key': key } });
+    const { code } = await response.json();
+    return response.ok && code ? `${url}pair?code=${code}` : null;
+  } catch {
+    return null;
+  }
 }
 
 function openBrowser(target) {
@@ -562,8 +576,12 @@ const commands = {
       for (let i = 0; i < 40 && !(await up()); i++) await new Promise((r) => setTimeout(r, 100));
       if (!(await up())) throw new Error(`The board server did not start on port ${boardPort()}. Set FACTORY_PORT to a free port, or use "board --static".`);
     }
+    // Pairing is for the user's own terminal: an agent session gets the plain address, which shows nothing unpaired.
+    const paired = process.env.CLAUDECODE ? null : await pairingLink(url);
+    if (!paired) return console.log(url);
+    if (args['no-open']) return console.log(`${url}\nOpen this link once to pair your browser with the board (valid for two minutes):\n${paired}`);
     console.log(url);
-    if (!args['no-open']) openBrowser(url);
+    openBrowser(paired);
   },
 
   async serve() {
@@ -573,6 +591,7 @@ const commands = {
     // "board --stop" and Ctrl-C end the agent sessions this server started; they would otherwise run on unseen.
     for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { server.stopAgents(); process.exit(0); });
     fs.writeFileSync(path.join(factoryRoot(), `.board-${boardPort()}.pid`), String(process.pid));
+    console.log('The board answers only a paired browser. Run "factory board" in another terminal to open it paired.');
     console.log(`Board at http://127.0.0.1:${boardPort()}/`);
   },
 

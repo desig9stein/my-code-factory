@@ -33,7 +33,7 @@ factory review 'app#123'
 factory help
 ```
 
-The board listens on `http://127.0.0.1:4317`. `npm start` runs it in the foreground. `factory board` starts it in the background; `factory board --stop` stops that instance. `FACTORY_PORT` selects another port. The server tells the page when task data changes, and the page also checks every ten seconds; open forms and explanations are preserved until you finish interacting.
+The board listens on `http://127.0.0.1:4317` and answers only a browser paired with it. `factory board` opens your browser on a one-time link that pairs it; the browser then stays paired, also across restarts. Opening the address in a browser that is not paired shows how to pair and nothing else. With `--no-open`, the command prints the link to open yourself. `npm start` runs it in the foreground. `factory board` starts it in the background; `factory board --stop` stops that instance. `FACTORY_PORT` selects another port. The server tells the page when task data changes, and the page also checks every ten seconds; open forms and explanations are preserved until you finish interacting.
 
 ## Included
 
@@ -100,7 +100,7 @@ See [calculation method](docs/calculations.md) for units, assumptions, sources, 
 
 Read the [workflow](docs/workflow.md), [project configuration](docs/projects.md), and [Claude Code adapter](docs/claude-code.md). Start with one builder and one independent verification pass. The factory records checks; it does not provide an OS sandbox or prove that two actor labels represent independent people or models.
 
-The local board has host and request-token checks. Hooks are workflow guardrails, not a security boundary against a process with filesystem access. Keep the board local and configure your coding harness's own sandbox and permissions.
+The local board has host and request-token checks and answers only a browser paired from your terminal, so another program on the machine cannot load the page and approve as you. The pairing key is `.board-key` in the data folder, readable by your user only; sessions the board starts are refused that file, and the guard hooks refuse it to other agent sessions. Hooks are workflow guardrails, not a security boundary against a process with filesystem access. Keep the board local and configure your coding harness's own sandbox and permissions.
 
 ## Development
 

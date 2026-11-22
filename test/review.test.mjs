@@ -126,7 +126,7 @@ test('posting is refused until the draft is approved', () => {
 
 test('the board approves only the draft it showed', async () => {
   const { startServer } = await import('../lib/server.mjs');
-  const server = await startServer(0);
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];
@@ -193,4 +193,9 @@ test('agents cannot reach the board, where approval happens', () => {
   assert.equal(bash('FACTORY_PORT=4400 node factory/bin/factory.mjs board').deny, true);
   assert.equal(bash('node factory/bin/factory.mjs serve').deny, true);
   assert.equal(bash('node factory/bin/factory.mjs board --no-open').deny, false);
+  // Pairing a browser is the user's: the key, the pairing calls, and hiding that the caller is an agent are refused.
+  assert.equal(bash('cat factory/.board-key').deny, true);
+  assert.equal(decide({ tool_name: 'Read', tool_input: { file_path: path.join(WORKSPACE, 'factory', '.board-key') }, cwd: WORKSPACE }).deny, true);
+  assert.equal(bash('env -u CLAUDECODE node factory/bin/factory.mjs board --no-open').deny, true);
+  assert.equal(bash('curl -X POST http://127.0.0.1:9999/api/pair/start').deny, true);
 });

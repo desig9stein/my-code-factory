@@ -97,6 +97,7 @@ test('the Claude Code command carries the mode, the rules and the model, and dro
   assert.deepEqual(scoped.args, ['-p', 'hello', '--output-format', 'stream-json', '--verbose', '--model', 'opus', '--add-dir', '/data/issues/app-1', '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(npm test:*)', '--disallowedTools', 'Bash(git push:*)', 'Edit(//data/issues/app-1/state.json)', 'Edit(//data/issues/app-1/evidence/**)']);
   // The files only the factory writes are refused in every mode, also where the factory adds no other rule.
   assert.deepEqual(tool.command({ prompt: 'x', permission: 'own', protect: ['/d/state.json'] }).args.slice(-2), ['--disallowedTools', 'Edit(//d/state.json)']);
+  assert.deepEqual(tool.command({ prompt: 'x', permission: 'auto', secret: ['/d/.board-key'] }).args.slice(-3), ['--disallowedTools', 'Read(//d/.board-key)', 'Edit(//d/.board-key)']);
   assert.deepEqual(tool.parse(JSON.stringify({ type: 'assistant', message: { content: [null, 5, 'x'] } })), []);
   assert.equal(scoped.env.ANTHROPIC_API_KEY, undefined);
   assert.equal(scoped.env.CLAUDECODE, undefined);
@@ -129,6 +130,7 @@ test('a run starts one fresh session per stage and stops when the task is the us
   assert.deepEqual([first.key, first.nested], [null, null]);
   // The task's documents live outside the worktree, so the session is given that folder too.
   assert.equal(first.args[first.args.indexOf('--add-dir') + 1], path.join(ROOT, 'issues', id));
+  assert.ok(first.args.includes(`Read(/${path.join(ROOT, '.board-key')})`));
   assert.ok(first.args.includes(`Edit(/${path.join(ROOT, 'issues', id, 'state.json')})`) && first.args.includes(`Edit(/${path.join(ROOT, 'issues', id, 'evidence', '**')})`));
   const log = fs.readFileSync(path.join(ROOT, 'issues', id, 'agent.log'), 'utf8');
   assert.match(log, /Session 1: stage "triage", model opus\.\nWorking on demo-1\.\n  Bash npm\n/);
@@ -216,7 +218,7 @@ test('the queue runs at most the configured number of agents, and a stop ends a 
 test('the board starts and stops an agent only with its token, and shows the run and the settings', async () => {
   saveAgentSettings({ maxConcurrent: 2 });
   behave('hang');
-  const server = await startServer(0);
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   const token = /__factoryToken="([0-9a-f]+)"/.exec(await (await fetch(base)).text())[1];
   const call = (pathname, body, headers = { 'X-Factory-Token': token }) => fetch(`${base}${pathname}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
@@ -281,3 +283,52 @@ test('a file the system leaves in the data folder is not a task, and two writers
   assert.throws(() => writeJson(file, { big: 1n }), /BigInt/);
   assert.deepEqual(fs.readdirSync(path.dirname(file)), ['value.json']);
 });
+
+test('the board answers only a browser paired from the terminal', async () => {
+  const { readKey } = await import('../lib/pairing.mjs');
+  const server = await startServer(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // Without the cookie: no page content, no token, no data, no action.
+    const bare = await fetch(base);
+    const text = await bare.text();
+    assert.equal(bare.status, 200);
+    assert.match(text, /This browser is not paired with the board/);
+    assert.ok(!text.includes('__factoryToken') && !text.includes('demo-1'));
+    assert.equal((await fetch(`${base}/board-data.js`)).status, 401);
+    assert.equal((await fetch(`${base}/api/agents`)).status, 401);
+    assert.equal((await fetch(`${base}/api/events`)).status, 401);
+    assert.equal((await fetch(`${base}/api/approve`, { method: 'POST', body: '{}' })).status, 401);
+    assert.equal((await fetch(`${base}/api/ping`)).status, 200);
+    // A code is given only for the key, works once, and yields the cookie.
+    const start = (key) => fetch(`${base}/api/pair/start`, { method: 'POST', headers: key ? { 'X-Factory-Key': key } : {} });
+    assert.equal((await start()).status, 403);
+    assert.equal((await start('0'.repeat(64))).status, 403);
+    const key = readKey();
+    assert.match(key, /^[0-9a-f]{64}$/);
+    assert.equal(fs.statSync(path.join(ROOT, '.board-key')).mode & 0o077, 0);
+    const { code } = await (await start(key)).json();
+    assert.equal((await fetch(`${base}/pair?code=nope`)).status, 403);
+    const paired = await fetch(`${base}/pair?code=${code}`, { redirect: 'manual' });
+    assert.equal(paired.status, 302);
+    const cookie = paired.headers.get('set-cookie');
+    assert.match(cookie, /^factory_pair_\d+=[0-9a-f]{64}; Path=\/; Max-Age=\d+; HttpOnly; SameSite=Strict$/);
+    assert.ok(!cookie.includes(key));
+    assert.equal((await fetch(`${base}/pair?code=${code}`, { redirect: 'manual' })).status, 403);
+    const mine = { Cookie: cookie.split(';')[0] };
+    assert.match(await (await fetch(base, { headers: mine })).text(), /__factoryToken=/);
+    assert.equal((await fetch(`${base}/board-data.js`, { headers: mine })).status, 200);
+    // The cookie of another board, or a changed one, is not this board's.
+    assert.equal((await fetch(`${base}/board-data.js`, { headers: { Cookie: `${cookie.split('=')[0]}=${'a'.repeat(64)}` } })).status, 401);
+    assert.equal((await fetch(`${base}/board-data.js`, { headers: { Cookie: `factory_pair_1=${cookie.split('=')[1].split(';')[0]}` } })).status, 401);
+    // Paired, an action still needs the page's own token.
+    assert.equal((await fetch(`${base}/api/agent/run`, { method: 'POST', headers: mine, body: '{}' })).status, 403);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
+  // The same browser stays paired when the board starts again.
+  const again = await startServer(0);
+  again.close();
+});
+
