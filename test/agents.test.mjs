@@ -15,7 +15,7 @@ fs.chmodSync(FAKE, 0o755);
 delete process.env.CODEIGNITE_PORT;
 Object.assign(process.env, { CODEIGNITE_ROOT: ROOT, CODEIGNITE_WORKSPACE: WS, CODEIGNITE_CLAUDE_BIN: FAKE, FAKE_AGENT_ARGS: ARGS, CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'), ANTHROPIC_API_KEY: 'sk-test-not-real', CLAUDECODE: '1' });
 
-const { agentSettings, checkProjectAgent, createRunner, haltReason, readRun, runTask, runView, saveAgentSettings, sessionPolicy } = await import('../lib/agents.mjs');
+const { agentSettings, checkProjectAgent, createRunner, haltReason, checkUsage, overBudget, overCap, planUsage, readRun, runTask, runView, saveAgentSettings, sessionPolicy, spendToday } = await import('../lib/agents.mjs');
 const { harness, harnesses } = await import('../lib/harnesses.mjs');
 const { getRepo } = await import('../lib/registry.mjs');
 const { listStates } = await import('../lib/state.mjs');
@@ -51,7 +51,7 @@ const until = async (check, what) => {
 };
 
 test('agent settings have safe defaults, reject bad values and keep the rest of the configuration', () => {
-  assert.deepEqual(agentSettings(), { harness: 'claude', permission: 'scoped', account: 'login', maxConcurrent: 2, maxSessions: 12, sessionMinutes: 60, autoStart: false });
+  assert.deepEqual(agentSettings(), { harness: 'claude', permission: 'scoped', account: 'login', maxConcurrent: 2, maxSessions: 12, sessionMinutes: 60, usageCap: 80, dailyBudget: 0, autoStart: false });
   assert.throws(() => saveAgentSettings({ permission: 'bypass' }), /permission must be one of scoped, auto, own/);
   assert.throws(() => saveAgentSettings({ maxConcurrent: 0 }), /maxConcurrent must be a whole number from 1 to 8/);
   assert.throws(() => saveAgentSettings({ harness: 'other' }), /Unknown coding harness "other"\. Known: claude/);
@@ -237,6 +237,10 @@ test('the board starts and stops an agent only with its token, and shows the run
     assert.deepEqual([shown.status, shown.stage, shown.harness, shown.permission], ['running', 'implement', 'Claude Code', 'scoped']);
     assert.equal((await call('/api/agent/stop', { id })).status, 200);
     await until(() => readRun(id).status === 'ended', 'the run to end');
+    // What the harness last reported about the plan is read at each request, not kept with the slow parts.
+    write(path.join(ROOT, 'cache', 'plan-usage.json'), JSON.stringify({ at: new Date().toISOString(), windows: [{ id: 'five_hour', used: 0.42, resetsAt: null }] }));
+    assert.equal((await (await fetch(`${base}/api/agents`)).json()).planUsage.windows[0].used, 0.42);
+    fs.rmSync(path.join(ROOT, 'cache', 'plan-usage.json'));
     const overview = await (await fetch(`${base}/api/agents`)).json();
     assert.deepEqual([overview.harness.id, overview.settings.maxConcurrent, overview.harness.permissionModes.map((m) => m.id)], ['claude', 2, ['scoped', 'auto', 'own']]);
     assert.match((await (await call('/api/agents/settings', { maxSessions: 99 })).json()).error, /maxSessions must be a whole number from 1 to 40/);
@@ -330,5 +334,119 @@ test('the board answers only a browser paired from the terminal', async () => {
   // The same browser stays paired when the board starts again.
   const again = await startServer(0);
   again.close();
+});
+
+test('agents pause at the share of the plan limit the user set, and start again once the window has reset', async () => {
+  const usageFile = path.join(ROOT, 'cache', 'plan-usage.json');
+  fs.rmSync(usageFile, { force: true });
+  saveAgentSettings({ usageCap: 80, maxConcurrent: 2 });
+  assert.throws(() => saveAgentSettings({ usageCap: 101 }), /usageCap must be a whole number from 0 to 100/);
+  // Nothing reported yet: the brake has nothing to go by and stops nothing.
+  assert.deepEqual([planUsage(), overCap()], [null, null]);
+  // Below the share the run goes on, and what the harness reported is kept.
+  behave('advance');
+  process.env.FAKE_USAGE = '0.5';
+  assert.equal((await runTask(task(40, 'triage'))).reason, 'your-turn');
+  assert.deepEqual(planUsage().windows.map((w) => [w.id, w.used]), [['five_hour', 0.5], ['seven_day', 0.1]]);
+  // Just past the share the session finishes its step; no further session starts.
+  process.env.FAKE_USAGE = '0.85';
+  const paused = await runTask(task(41, 'triage'));
+  assert.deepEqual([paused.reason, paused.sessions.length, paused.sessions[0].ok], ['usage', 1, true]);
+  assert.match(paused.detail, /^Agents are paused to keep the share of your plan limit you set aside\. Your 5-hour plan usage is at 85%, and agents pause at 80%\. It resets .* change the share under Settings\.$/);
+  // Until the window resets no run starts, from the queue or by hand.
+  const runner = createRunner();
+  assert.throws(() => runner.start(task(42, 'implement')), /Agents are paused .* 5-hour plan usage is at 85%/);
+  const refused = await runTask(task(43, 'implement'));
+  assert.deepEqual([refused.reason, refused.sessions.length], ['usage', 0]);
+  runner.close();
+  // Far past the share a running session is interrupted.
+  behave('hang');
+  process.env.FAKE_USAGE = '0.97';
+  write(usageFile, JSON.stringify({ at: new Date().toISOString(), windows: [{ id: 'five_hour', used: 0.2, resetsAt: Math.round(Date.now() / 1000) + 600 }] }));
+  const cut = await runTask(task(44, 'implement'));
+  assert.deepEqual([cut.reason, cut.sessions.length], ['usage', 1]);
+  // A window that has reset says nothing about now, and 0 switches the brake off.
+  write(usageFile, JSON.stringify({ at: new Date().toISOString(), windows: [{ id: 'five_hour', used: 0.99, resetsAt: Math.round(Date.now() / 1000) - 60 }] }));
+  assert.equal(overCap(), null);
+  write(usageFile, JSON.stringify({ at: new Date().toISOString(), windows: [{ id: 'five_hour', used: 0.99, resetsAt: Math.round(Date.now() / 1000) + 600 }] }));
+  assert.equal(overCap().id, 'five_hour');
+  saveAgentSettings({ usageCap: 0 });
+  assert.equal(overCap(), null);
+  // A harness that reports no usage, such as one billed by an API key, leaves the brake without a figure.
+  assert.deepEqual(harness('claude').parse(JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } })), []);
+  delete process.env.FAKE_USAGE;
+  fs.rmSync(usageFile, { force: true });
+  saveAgentSettings({ usageCap: 80 });
+});
+
+test('the plan usage is asked for before a run when the last figure is old, and a harness that reports none is said to', async () => {
+  const usageFile = path.join(ROOT, 'cache', 'plan-usage.json');
+  const probes = path.join(tmp, 'probes.txt');
+  process.env.FAKE_AGENT_PROBES = probes;
+  const asked = () => (fs.existsSync(probes) ? fs.readFileSync(probes, 'utf8').trim().split('\n').length : 0);
+  saveAgentSettings({ usageCap: 80 });
+  behave('advance');
+  // No figure on file: it is asked for first, and at 90% no session starts at all.
+  fs.rmSync(usageFile, { force: true });
+  process.env.FAKE_USAGE = '0.9';
+  const held = await runTask(task(50, 'triage'));
+  assert.deepEqual([held.reason, held.sessions.length, asked()], ['usage', 0, 1]);
+  // A fresh figure is not asked for again; one older than half an hour is.
+  process.env.FAKE_USAGE = '0.3';
+  write(usageFile, JSON.stringify({ at: new Date().toISOString(), windows: [{ id: 'five_hour', used: 0.3, resetsAt: Math.round(Date.now() / 1000) + 600 }] }));
+  assert.equal((await runTask(task(51, 'triage'))).reason, 'your-turn');
+  assert.equal(asked(), 1);
+  write(usageFile, JSON.stringify({ at: new Date(Date.now() - 45 * 60_000).toISOString(), windows: [{ id: 'five_hour', used: 0.99, resetsAt: Math.round(Date.now() / 1000) + 600 }] }));
+  assert.equal((await runTask(task(52, 'triage'))).reason, 'your-turn');
+  assert.equal(asked(), 2);
+  // With the brake off nothing is asked.
+  saveAgentSettings({ usageCap: 0 });
+  fs.rmSync(usageFile, { force: true });
+  await runTask(task(53, 'triage'));
+  assert.equal(asked(), 2);
+  saveAgentSettings({ usageCap: 80 });
+  // A harness that answers without a usage figure, as with an API key: kept as "reported nothing", and the run goes on.
+  delete process.env.FAKE_USAGE;
+  fs.rmSync(usageFile, { force: true });
+  assert.deepEqual(await checkUsage().then((u) => [u.windows.length, u.silent]), [0, true]);
+  assert.equal(overCap(), null);
+  assert.equal((await runTask(task(54, 'triage'))).reason, 'your-turn');
+  assert.equal(planUsage().silent, true);
+  // A harness that does not answer at all says nothing: the last figure stays.
+  write(usageFile, JSON.stringify({ at: new Date().toISOString(), windows: [{ id: 'five_hour', used: 0.4, resetsAt: null }] }));
+  process.env.FAKE_PROBE = 'dead';
+  assert.equal((await checkUsage()).windows[0].used, 0.4);
+  delete process.env.FAKE_PROBE;
+  delete process.env.FAKE_AGENT_PROBES;
+  fs.rmSync(usageFile, { force: true });
+});
+
+test('agents pause at the cost the user allows per day, whatever the account', async () => {
+  const spendFile = path.join(ROOT, 'cache', 'spend.json');
+  fs.rmSync(spendFile, { force: true });
+  assert.throws(() => saveAgentSettings({ dailyBudget: 2.5 }), /dailyBudget must be a whole number from 0 to 1000/);
+  saveAgentSettings({ usageCap: 0, dailyBudget: 0 });
+  behave('advance');
+  // Every session's estimate is added to the day, cap or no cap. The stand-in reports one cent a session.
+  await runTask(task(60, 'triage'));
+  assert.deepEqual([spendToday().sessions, spendToday().usd.toFixed(2), overBudget()], [3, '0.03', null]);
+  // Yesterday's figure does not count today.
+  write(spendFile, JSON.stringify({ day: '2020-01-01', usd: 500, sessions: 9 }));
+  assert.deepEqual([spendToday().usd, spendToday().sessions], [0, 0]);
+  // At the cap no session starts, by hand or from the queue, and the reason says what the figure is.
+  saveAgentSettings({ dailyBudget: 1 });
+  write(spendFile, JSON.stringify({ day: spendToday().day, usd: 1.25, sessions: 7 }));
+  const held = await runTask(task(61, 'triage'));
+  assert.deepEqual([held.reason, held.sessions.length], ['budget', 0]);
+  assert.match(held.detail, /^Agents are paused at the cost you allow per day\. Claude Code estimates today's 7 session\(s\) at \$1\.25, and agents pause at \$1 a day\. .* an estimate, not a bill\.$/);
+  const runner = createRunner();
+  assert.throws(() => runner.start(task(62, 'implement')), /Agents are paused at the cost you allow per day/);
+  runner.close();
+  // Below the cap a run goes on until the day's sessions reach it.
+  write(spendFile, JSON.stringify({ day: spendToday().day, usd: 0.985, sessions: 1 }));
+  const reached = await runTask(task(63, 'triage'));
+  assert.deepEqual([reached.reason, reached.sessions.length], ['budget', 2]);
+  saveAgentSettings({ usageCap: 80, dailyBudget: 0 });
+  fs.rmSync(spendFile, { force: true });
 });
 

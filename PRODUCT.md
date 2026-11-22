@@ -35,6 +35,7 @@ A repeatable pipeline. Every task goes through the same stages, gates and brakes
 - "Run agent" starts the user's own coding agent in the background, one session per step, until the task needs the user. What it may do, how many run at once and the account are settings of the machine.
 - After a pull request opens the user can ask GitHub, from the task, for its checks and reviews; failures and feedback are shown, and the user decides what goes back to the agent. The board does not ask GitHub by itself.
 - The tab title counts the tasks that wait for the user, and an optional system notification tells them when a task newly needs them. Both work from the open board tab; nothing is sent anywhere.
+- Agents pause at a share of the user's plan limit that the user sets. Each task has a port of its own and runs the project's setup and teardown commands.
 - Brakes: a limit on failed attempts, and "Send back" with a lesson that later briefs carry.
 - Constraint: local only. No hosted version, accounts or telemetry.
 - Current state, not confirmed as a commitment: the board is plain HTML, CSS and JS with no runtime npm dependencies and no build step.
