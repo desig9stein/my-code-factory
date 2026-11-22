@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Stands in for a coding harness in the tests: prints the events of one session and acts on the task as told.
-// FAKE_AGENT picks the behavior: advance | idle | fail | hang | silent. The task id is read from the prompt.
+// FAKE_AGENT picks the behavior: advance | idle | fail | hang | silent | tree | junk. The task id is read from the prompt.
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 if (process.argv.includes('--version')) {
@@ -18,7 +19,17 @@ if (process.env.FAKE_AGENT_ARGS) fs.appendFileSync(process.env.FAKE_AGENT_ARGS, 
 if (mode === 'silent') process.exit(3);
 say({ type: 'system', subtype: 'init', session_id: `fake-${process.pid}`, model: 'fake-model', apiKeySource: 'none' });
 say({ type: 'assistant', message: { content: [{ type: 'text', text: `Working on ${id}.` }, { type: 'tool_use', name: 'Bash', input: { command: 'npm test -- --secret-flag' } }] } });
-if (mode === 'hang') {
+if (mode === 'junk') {
+  // Lines a harness could print that are not what the adapter expects.
+  for (const line of ['', 'not json', 'null', '[]', '{"type":"assistant","message":{"content":[null,5,{"type":"tool_use"}]}}', '{"type":"assistant"}', '{"type":"result","subtype":"success","permission_denials":[null]}']) process.stdout.write(`${line}\n`);
+  process.exit(0);
+}
+if (mode === 'tree') {
+  // A command the session started and did not wait for; its process id is left for the test to check.
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  fs.writeFileSync(process.env.FAKE_AGENT_CHILD, String(child.pid));
+}
+if (mode === 'hang' || mode === 'tree') {
   process.on('SIGINT', () => process.exit(130));
   setInterval(() => {}, 1000);
 } else {

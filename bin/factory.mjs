@@ -521,6 +521,7 @@ const commands = {
   archive(args) {
     const state = loadState(args._[0]);
     const deleteBranch = args['delete-branch'] === true;
+    if (['running', 'queued'].includes(readRun(state.id)?.status)) throw new Error(`An agent runs on ${state.id}, or waits to. Stop it on the board first, then archive.`);
     archive(state, getRepo(state.repo), { deleteBranch });
     writeBoard();
     console.log(`${state.id} archived. The local branch ${state.branch} is ${deleteBranch ? 'deleted' : 'kept'}.`);

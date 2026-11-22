@@ -35,8 +35,10 @@
   applyExplain();
   // Sections of a task that open on demand stay open across data loads.
   const openFolds = new Set();
-  const fold = (key, title, body, open = false) => { const id = `${selected}:${key}`; return `<details class="fd-fold fd-keep" data-fold="${escape(key)}"${openFolds.has(id) || (open && !openFolds.has(`${id}:closed`)) ? ' open' : ''}><summary>${title}</summary><div class="fd-fold-body">${body}</div></details>`; };
-  document.addEventListener('toggle', e => { const key = e.target.dataset?.fold; if (!key || !selected) return; const id = `${selected}:${key}`; if (e.target.open) { openFolds.add(id); openFolds.delete(`${id}:closed`); } else { openFolds.delete(id); openFolds.add(`${id}:closed`); } }, true);
+  // The attributes of a details element whose open state is remembered; `owner` is the task it belongs to, or a page name.
+  const kept = (key, owner = selected, open = false) => { const id = `${owner}:${key}`; return ` data-fold="${escape(key)}" data-fold-owner="${escape(owner || '')}"${openFolds.has(id) || (open && !openFolds.has(`${id}:closed`)) ? ' open' : ''}`; };
+  const fold = (key, title, body, open = false) => { return `<details class="fd-fold fd-keep"${kept(key, selected, open)}><summary>${title}</summary><div class="fd-fold-body">${body}</div></details>`; };
+  document.addEventListener('toggle', e => { const key = e.target.dataset?.fold; if (!key) return; const id = `${e.target.dataset.foldOwner}:${key}`; if (e.target.open) { openFolds.add(id); openFolds.delete(`${id}:closed`); } else { openFolds.delete(id); openFolds.add(`${id}:closed`); } }, true);
   $('notice').onclick = e => { if (e.target.id === 'notice-close') notice(''); };
   // Mirrors TITLES in lib/workflow.mjs, for places that only have a stage key.
   const STEP_NAMES = { gates: 'checks', ready: 'your review', approved: 'open the PR', 'pr-opened': 'PR opened' };
@@ -61,15 +63,20 @@
     if (view === 'report' && !report) loadReport();
     if (view === 'github' && !gh && !ghLoading) loadGithub();
   }
-  function checklist(full = false) {
-    if (!served) return '';
-    if (!setup) return '<p class="fd-caption">Checking setup…</p>';
-    const row = (ok, text, fix) => `<li><span class="${ok ? 'fd-pass' : 'fd-warning'}">${ok ? '✓' : '!'}</span> ${escape(text)}${ok || !fix ? '' : `<br><span class="fd-caption">${escape(fix)}</span>`}</li>`;
+  // Every setup check with its state: the tools, the projects and the hooks.
+  function setupRows() {
     const bare = data.projects.filter(p => !p.gates.length).map(p => p.key);
     const rows = [...setup.checks.map(c => [c.ok, c.name, c.fix]),
       [data.projects.length > 0, `${data.projects.length} project(s) registered`, 'Register one on the Projects page, or run "factory setup" in your terminal.'],
       [!bare.length, bare.length ? `No check configured: ${bare.join(', ')}` : 'Every project has a check', 'Open Projects and use Edit to add one.'],
       [setup.hooksInstalled, 'Claude Code guard hooks', 'Optional. Run "factory hooks --install" in your terminal.']];
+    return rows;
+  }
+  function checklist(full = false) {
+    if (!served) return '';
+    if (!setup) return '<p class="fd-caption">Checking setup…</p>';
+    const row = (ok, text, fix) => `<li><span class="${ok ? 'fd-pass' : 'fd-warning'}">${ok ? '✓' : '!'}</span> ${escape(text)}${ok || !fix ? '' : `<br><span class="fd-caption">${escape(fix)}</span>`}</li>`;
+    const rows = setupRows();
     const open = rows.filter(([ok]) => !ok).length;
     // Elsewhere than on Settings the list appears only when something needs the user.
     if (!full && !open) return '';
@@ -77,11 +84,13 @@
   }
   // Marks Settings in the navigation when a setup check fails, so the list itself need not sit on every page.
   function setupAttention() {
-    const failing = setup ? setup.checks.filter(c => !c.ok).length + (setup.hooksInstalled ? 0 : 1) : 0;
+    const failing = setup ? setupRows().filter(([ok]) => !ok).length : 0;
     const button = document.querySelector('.fd-nav [data-view="settings"]');
     button.innerHTML = `Settings${failing ? ` <span class="fd-attn" title="${failing} setup item(s) to look at">${failing}</span>` : ''}`;
   }
   function renderSettings() {
+    // Values typed and not yet saved stay until they are saved.
+    if ($('agents-form')?.dataset.dirty) return;
     $('settings').innerHTML = `<header class="fd-page-head"><div><h2 class="fd-h1">Settings</h2><p class="fd-desc">Settings of this machine: the tools Codeignite needs and the agents the board runs. They are not part of the team export.</p></div></header>${checklist(true)}${agentsSection()}`;
   }
   async function loadSetup() {
@@ -99,7 +108,6 @@
     renderProjects(); renderSettings();
     if (!task()) renderDetail();
   }
-  const doc = (title, content) => `<section><h3>${escape(title)}</h3>${content ? `<pre>${escape(content)}</pre>` : '<p class="fd-caption">Not recorded yet.</p>'}</section>`;
   function saveAssumptions() {
     try { localStorage.setItem('factory-scenario-v1', JSON.stringify({ rates, object })); }
     catch { notice('Assumptions apply now, but this browser could not save them for next time.'); }
@@ -162,7 +170,6 @@
     return isActive(i) ? `<span class="fd-pulse"></span><span>Agent working${a?.lastInside ? ` · ${escape(callText(a.lastInside))}` : ''} · ${since} ago</span>` : `<span class="fd-idle"></span><span>Last agent activity ${since} ago</span>`;
   };
   const liveLine = (i) => `<div class="fd-live" data-live="${escape(i.id)}">${liveInner(i)}</div>`;
-  const currentStage = (i) => i.activity.byStage.find(s => s.stage === i.stage);
   function renderBoard() {
     if (!data.issues.length) { $('kanban').innerHTML = `<div class="fd-empty"><h2 class="fd-h1">Your workspace is ready.</h2>${data.projects.length ? '<p>No task is in flight. Pick an issue under GitHub issues, or use New task. It appears here and moves across the board as its checks pass.</p>' : '<p>No project is registered yet. Run <code>factory setup</code>, or register projects on the Projects page.</p>'}${checklist()}</div>`; renderDrawer(); return; }
     const card = i => { const st = queueStatus(i); return `<button class="fd-tcard" data-peek="${escape(i.id)}" aria-pressed="${i.id === peek}"><span class="fd-repo"><span>${escape(i.repo)}</span><span>${i.kind === 'review' ? 'PR ' : ''}#${escape(i.issue)}</span></span><strong>${escape(i.title)}</strong><span class="fd-status ${st.cls}">${escape(st.text)}</span><span class="fd-tcard-meta">${i.tier === 'trivial' ? 'trivial · ' : ''}${agoShort(i.stageSince)} in this step${i.reach.length ? ` · reaches ${plural(i.reach.length, 'project')}` : ''}</span>${liveLine(i)}</button>`; };
@@ -183,7 +190,7 @@
     $('drawer').hidden = !i; $('board').classList.toggle('fd-board-open', Boolean(i));
     if (!i) { showPane('list'); return; }
     // The drawer leads with what to do, the same panel the task page shows; the agent's activity is one click below.
-    $('drawer').innerHTML = `<button class="fd-btn fd-back" data-close>← Board</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}</p><h2 class="fd-h1">${escape(i.title)}</h2>${nowPanel(i, true)}<div class="fd-actions">${i.stage === 'ready' && !i.blocked ? '' : '<button class="fd-btn" data-open="">Open the task</button>'}<button class="fd-btn fd-ghost fd-drawer-close" data-close>Close</button></div><details class="fd-more fd-keep"><summary>What the agent did, step by step</summary>${i.activity ? agentActivity(i) : '<p class="fd-caption">No activity recorded.</p>'}</details>`;
+    $('drawer').innerHTML = `<button class="fd-btn fd-back" data-close>← Board</button><p class="fd-crumb">${externalLink(i.url, `${i.repo} / ${i.kind === 'review' ? 'PR ' : ''}#${i.issue}`)}</p><h2 class="fd-h1">${escape(i.title)}</h2>${nowPanel(i, true)}<div class="fd-actions">${i.stage === 'ready' && !i.blocked ? '' : '<button class="fd-btn" data-open="">Open the task</button>'}<button class="fd-btn fd-ghost fd-drawer-close" data-close>Close</button></div><details class="fd-more fd-keep"${kept('drawer-activity', i.id)}><summary>What the agent did, step by step</summary>${i.activity ? agentActivity(i) : '<p class="fd-caption">No activity recorded.</p>'}</details>`;
   }
   // Keeps "3 s ago" and the working marker current between data loads, without redrawing cards.
   function tick() {
@@ -201,22 +208,22 @@
     if (!i.prompt || !i.worktree) return '';
     const terminal = `claude-cli://open?q=${encodeURIComponent(i.prompt)}&cwd=${encodeURIComponent(i.worktree)}`;
     const vscode = `vscode://anthropic.claude-code/open?prompt=${encodeURIComponent(i.prompt)}`;
-    return `<div class="fd-actions"><a class="fd-btn ${primary ? 'fd-primary' : ''}" href="${escape(terminal)}">Open in terminal</a><a class="fd-btn" href="${escape(vscode)}">Open in VS Code</a><button class="fd-btn" type="button" data-copy-prompt>Copy the prompt</button></div><details class="fd-launch-help"><summary>How these buttons work</summary><ul><li><strong>Terminal</strong> opens Claude Code in the task's folder with the message typed in. Press Enter to send it. It works after you have used <code>claude</code> in a terminal once on this machine.</li><li><strong>VS Code</strong> opens a new Claude Code chat in the window you last used, with the message typed in. Open the task's folder there first: <code>${escape(i.worktree)}</code></li><li><strong>WebStorm and other editors</strong> have no such link. Copy the prompt and paste it into the Claude panel or its terminal.</li></ul></details>`;
+    return `<div class="fd-actions"><a class="fd-btn ${primary ? 'fd-primary' : ''}" href="${escape(terminal)}">Open in terminal</a><a class="fd-btn" href="${escape(vscode)}">Open in VS Code</a><button class="fd-btn" type="button" data-copy-prompt>Copy the prompt</button></div><details class="fd-launch-help fd-keep"${kept('launch-help', i.id)}><summary>How these buttons work</summary><ul><li><strong>Terminal</strong> opens Claude Code in the task's folder with the message typed in. Press Enter to send it. It works after you have used <code>claude</code> in a terminal once on this machine.</li><li><strong>VS Code</strong> opens a new Claude Code chat in the window you last used, with the message typed in. Open the task's folder there first: <code>${escape(i.worktree)}</code></li><li><strong>WebStorm and other editors</strong> have no such link. Copy the prompt and paste it into the Claude panel or its terminal.</li></ul></details>`;
   }
   // Starts and stops the user's own coding agent from the board, and says how its last run ended.
   function runBlock(i, manual) {
     if (!served) return manual;
     const r = i.run, tool = escape(r?.harness || 'your coding agent');
     const log = r?.log ? `<a class="fd-btn" href="/${escape(r.log)}" target="_blank" rel="noopener" data-agent-log>Open the log</a>` : '';
-    const own = (summary) => `<details class="fd-launch-more"><summary>${summary}</summary>${manual}</details>`;
+    const own = (summary) => `<details class="fd-launch-more fd-keep"${kept('own-session', i.id)}><summary>${summary}</summary>${manual}</details>`;
     if (r?.status === 'running') {
       return `<p class="fd-now-live"><span class="fd-dot"></span>Codeignite is running ${tool} on this task: session ${r.sessions || 1}${r.stage ? `, step "${escape(stepName(r.stage, i.id))}"` : ''}${r.model ? `, model ${escape(r.model)}` : ''}. Started ${agoShort(r.startedAt)} ago.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Stop the agent</button>${log}</div><p class="fd-caption fd-explain">It works step by step and stops by itself when the task needs you. Stopping interrupts the session; committed work stays.</p>`;
     }
     if (r?.status === 'queued') {
       return `<p class="fd-now-live"><span class="fd-idle"></span>Waiting for a free slot. At most ${number(data.agents?.maxConcurrent || 1)} agent${data.agents?.maxConcurrent === 1 ? ' runs' : 's run'} at once; change it under Settings.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Take it out of the queue</button></div>`;
     }
-    const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit'].includes(r.reason);
-    const last = r ? `<p class="${failed ? 'fd-warning' : 'fd-caption'}">The last run ended ${r.endedAt ? `${agoShort(r.endedAt)} ago` : 'without a record of when'} after ${plural(r.sessions, 'session')}: ${escape(r.detail || 'no reason was recorded.')}</p>${r.denials?.length && !/Refused commands/.test(r.detail || '') ? `<p class="fd-caption">Refused commands: ${r.denials.map(d => `<code>${escape(d)}</code>`).join(', ')}. If the agent needs one, allow it for this project under Projects, Edit.</p>` : ''}${r.limit ? `<p class="fd-warning">Your account's usage limit answered "${escape(r.limit.status)}"${r.limit.resetsAt ? `; it resets ${escape(new Date(r.limit.resetsAt).toLocaleString())}` : ''}.</p>` : ''}${r.said ? `<details class="fd-launch-more"><summary>The agent's last message</summary><pre class="fd-now-doc">${escape(r.said)}</pre></details>` : ''}` : '';
+    const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit', 'timeout'].includes(r.reason);
+    const last = r ? `<p class="${failed ? 'fd-warning' : 'fd-caption'}">The last run ended ${r.endedAt ? `${agoShort(r.endedAt)} ago` : 'without a record of when'} after ${plural(r.sessions, 'session')}: ${escape(r.detail || 'no reason was recorded.')}</p>${r.denials?.length && !/Refused commands/.test(r.detail || '') ? `<p class="fd-caption">Refused commands: ${r.denials.map(d => `<code>${escape(d)}</code>`).join(', ')}. If the agent needs one, allow it for this project under Projects, Edit.</p>` : ''}${r.limit ? `<p class="fd-warning">Your account's usage limit answered "${escape(r.limit.status)}"${r.limit.resetsAt ? `; it resets ${escape(new Date(r.limit.resetsAt).toLocaleString())}` : ''}.</p>` : ''}${r.said ? `<details class="fd-launch-more fd-keep"${kept('last-message', i.id)}><summary>The agent's last message</summary><pre class="fd-now-doc">${escape(r.said)}</pre></details>` : ''}` : '';
     const mode = data.projects.find(p => p.key === i.repo)?.agent?.permission || data.agents?.permission || '';
     return `${last}<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-run-agent>${r ? 'Run the agent again' : 'Run agent'}</button>${log}</div><p class="fd-caption fd-explain">Starts ${escape(data.agents?.label || 'your coding agent')} in the background with your own login, one fresh session per step, until the task needs you.${mode ? ` Permission mode: ${escape(data.agents?.modes?.[mode] || mode)}.` : ''} Change the mode and the limits under Settings.</p>${own('Or open a session yourself')}`;
   }
@@ -345,7 +352,11 @@
     }
     return files;
   }
+  // The diff of a commit does not change, so a data load redraws it without asking again or flashing.
+  let diffShown = { key: '', html: '' };
   async function renderChanges(i) {
+    const diffKey = `${i.id}:${i.head}`;
+    if (diffShown.key === diffKey) { $('diff').innerHTML = diffShown.html; return; }
     $('diff').innerHTML = '<p class="fd-caption">Loading committed changes…</p>';
     if (!served) { $('diff').innerHTML = '<p>Changes are available when running the local server.</p>'; return; }
     const id = i.id;
@@ -356,7 +367,8 @@
       if (selected !== id || shownTab !== 'review' || !$('diff')) return;
       const files = parseDiff(result.diff || '');
       const total = (key) => files.reduce((n, f) => n + f[key], 0);
-      $('diff').innerHTML = !files.length ? '<p>No committed changes against the merge base.</p>' : `<p>${number(files.length)} file${files.length === 1 ? '' : 's'} changed · <span class="fd-pass">+${number(total('add'))}</span> <span class="fd-fail">−${number(total('del'))}</span> lines. Committed changes against the merge base; uncommitted edits are excluded.</p>` + files.map(f => `<details class="fd-diff-file fd-keep"${f.lines.length > 600 ? '' : ' open'}><summary><span class="fd-path">${escape(f.name)}</span><span><span class="fd-pass">+${number(f.add)}</span> <span class="fd-fail">−${number(f.del)}</span></span></summary><div class="fd-diff">${f.lines.map(l => `<div${l.kind ? ` class="${l.kind}"` : ''}>${escape(l.text) || ' '}</div>`).join('')}</div></details>`).join('');
+      diffShown = { key: diffKey, html: !files.length ? '<p>No committed changes against the merge base.</p>' : `<p>${number(files.length)} file${files.length === 1 ? '' : 's'} changed · <span class="fd-pass">+${number(total('add'))}</span> <span class="fd-fail">−${number(total('del'))}</span> lines. Committed changes against the merge base; uncommitted edits are excluded.</p>` + files.map(f => `<details class="fd-diff-file fd-keep"${f.lines.length > 600 ? '' : ' open'}><summary><span class="fd-path">${escape(f.name)}</span><span><span class="fd-pass">+${number(f.add)}</span> <span class="fd-fail">−${number(f.del)}</span></span></summary><div class="fd-diff">${f.lines.map(l => `<div${l.kind ? ` class="${l.kind}"` : ''}>${escape(l.text) || ' '}</div>`).join('')}</div></details>`).join('') };
+      $('diff').innerHTML = diffShown.html;
     } catch (error) { if (selected === id && shownTab === 'review' && $('diff')) $('diff').textContent = error.message; }
   }
   function scopedUsage(i) { return scope === 'task' ? i.tokens : i.tokens.bySession?.find(session => session.id === scope); }
@@ -408,9 +420,9 @@
     const { settings: s, harness: h, limits } = agentsInfo;
     const options = (list, value) => list.map(o => `<option value="${escape(o.id)}"${o.id === value ? ' selected' : ''}>${escape(o.label)}</option>`).join('');
     const explain = (list) => `<dl class="fd-agent-modes">${list.map(o => `<dt>${escape(o.label)}</dt><dd>${escape(o.about)}</dd>`).join('')}</dl>`;
-    return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption fd-explain">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. ${h.version ? `Found: ${escape(h.version)}.` : `<span class="fd-warning">${escape(h.label)} was not found. ${escape(h.install)}</span>`} These settings stay on this machine and are not part of the team export.</p>
-<form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
-<details class="fd-launch-more fd-keep"><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption fd-explain">A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
+    return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption fd-explain">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. ${h.version ? `Found: ${escape(h.version)}.` : ''} These settings stay on this machine and are not part of the team export.</p>${h.version ? '' : `<p class="fd-warning">${escape(h.label)} was not found on this machine, so "Run agent" cannot start a session. ${escape(h.install)}</p>`}
+<form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label>Minutes per session, at most<input name="sessionMinutes" type="number" required min="${limits.sessionMinutes[0]}" max="${limits.sessionMinutes[1]}" value="${s.sessionMinutes}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
+<details class="fd-launch-more fd-keep"${kept('agent-choices', 'settings')}><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption fd-explain">A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
   }
   function renderProjectCards() {
     const match = p => `${p.key} ${p.remote}`.toLowerCase().includes(projectQuery.toLowerCase());
@@ -434,14 +446,16 @@
     try { openProject('add', await post('/api/project/locate', { path: e.target.elements.path.value })); }
     catch (error) { $('locate-error').textContent = error.message; }
   });
+  $('settings').addEventListener('input', e => { const form = e.target.closest('#agents-form'); if (form) form.dataset.dirty = '1'; });
   $('settings').addEventListener('submit', async e => {
     if (e.target.id !== 'agents-form') return;
     e.preventDefault();
     const f = e.target.elements;
     $('agents-error').textContent = '';
     try {
-      const saved = await post('/api/agents/settings', { permission: f.permission.value, account: f.account.value, maxConcurrent: Number(f.maxConcurrent.value), maxSessions: Number(f.maxSessions.value), autoStart: f.autoStart.checked });
+      const saved = await post('/api/agents/settings', { permission: f.permission.value, account: f.account.value, maxConcurrent: Number(f.maxConcurrent.value), maxSessions: Number(f.maxSessions.value), sessionMinutes: Number(f.sessionMinutes.value), autoStart: f.autoStart.checked });
       agentsInfo.settings = saved.settings;
+      delete e.target.dataset.dirty;
       notice('Agent settings saved. They apply to the next run.');
       document.activeElement?.blur(); refresh();
     } catch (error) { $('agents-error').textContent = error.message; }
@@ -610,7 +624,7 @@
     const chip = e.target.closest('[data-gh-repo]');
     if (chip) { ghRepo = chip.dataset.ghRepo; renderGithubList(); $('gh-results').querySelector('[aria-pressed=true]')?.focus(); }
     const open = e.target.closest('[data-open-task]'), start = e.target.closest('[data-start-project]');
-    if (open) { selected = open.dataset.openTask; scope = 'task'; show('work'); renderQueue(); renderDetail(); }
+    if (open) openTask(open.dataset.openTask);
     if (start) openNew(start.dataset.startProject, start.dataset.startNumber);
   });
   const node = (key) => data.graph.nodes.find(n => n.key === key);
@@ -679,14 +693,14 @@
     return `<h2 class="fd-h1">${escape(n.key)}</h2><p>${n.description ? escape(n.description) : '<span class="fd-muted">No description yet. Add <code>description</code> to this project in repos.json so newcomers know what it is.</span>'}</p>${n.owns ? `<p class="fd-caption">Change here when: ${escape(n.owns)}</p>` : ''}<h3>Depends on</h3>${n.dependsOn.length ? `<ul class="fd-plain">${n.dependsOn.map(d => `<li>${nodeLink(d.key)}<span class="fd-muted">${d.label ? ` · ${escape(d.label)}` : ''}${pin(d)}</span></li>`).join('')}</ul>` : '<p class="fd-muted">Nothing in this workspace.</p>'}<h3>Used by</h3>${n.usedBy.length ? `<ul class="fd-plain">${n.usedBy.map(u => { const label = node(u).dependsOn.find(d => d.key === n.key).label; return `<li>${nodeLink(u)}<span class="fd-muted">${label ? ` · ${escape(label)}` : ''}</span></li>`; }).join('')}</ul>` : '<p class="fd-muted">Nothing in this workspace.</p>'}<div class="fd-next fd-gap"><h3>If you change this project</h3><p>${n.reach.length ? `The change reaches <strong>${plural(n.reach.length, 'project')}</strong>: ${escape(names(n.reach.map(r => r.key)))}. Plan to check them before release.` : 'No other project in this workspace is affected.'}</p>${n.reach.length ? '<button class="fd-btn" data-mapmode="reach">Show what a change reaches</button>' : ''}</div><h3>Tasks in flight</h3>${tasks.map(miniTask).join('') || '<p class="fd-muted">None.</p>'}<h3>How it is checked</h3><p>${project?.gates.length ? project.gates.map(x => `<code>${escape(x.cmd)}</code>`).join(' · ') : '<span class="fd-warning">No check configured.</span>'}</p><div class="fd-actions fd-gap"><button class="fd-btn fd-primary" data-start="${escape(n.key)}">Start a task here</button>${externalLink(`https://github.com/${n.remote}`, 'Open on GitHub')}</div>`;
   }
   function renderMap() {
-    if (!data.graph?.nodes.length) { $('map').innerHTML = '<div class="fd-page"><h2 class="fd-h1">Workspace map</h2><p class="fd-desc">No projects are registered yet.</p><pre>factory add app /path/to/app --verify "npm run verify"</pre></div>'; return; }
+    if (!data.graph?.nodes.length) { $('map').innerHTML = '<div class="fd-page"><h2 class="fd-h1">Workspace map</h2><p>No projects are registered yet.</p><pre>factory add app /path/to/app --verify "npm run verify"</pre></div>'; return; }
     if (mapSel && !node(mapSel)) mapSel = null;
     const tracing = mapMode === 'reach' && mapSel;
     $('map').innerHTML = `<div class="fd-map"><div class="fd-canvas"><div class="fd-map-bar"><p class="fd-board-note">${tracing ? `Showing everything a change in <strong>${escape(mapSel)}</strong> reaches, in order.` : 'An arrow means: a change in the upper project reaches the lower one. Select a project to learn about it.'}</p><div class="fd-switch" role="group" aria-label="Map mode"><button data-mapmode="explore" aria-pressed="${mapMode === 'explore'}">Explore</button><button data-mapmode="reach" aria-pressed="${mapMode === 'reach'}">What a change reaches</button></div></div><div class="fd-graph-wrap">${graphSvg()}</div>${graphTree()}</div><aside class="fd-side" id="map-panel" tabindex="-1" aria-label="Project details">${mapPanel()}</aside></div>`;
   }
   function renderMetrics() {
     const m = data.metrics;
-    if (!m || !m.tasks.length) { $('metrics').innerHTML = '<h2 class="fd-h1">Metrics</h2><p class="fd-desc">No implemented tasks are recorded yet. Measures appear once a task has run its checks.</p>'; return; }
+    if (!m || !m.tasks.length) { $('metrics').innerHTML = '<h2 class="fd-h1">Metrics</h2><p>No implemented tasks are recorded yet. Measures appear once a task has run its checks.</p>'; return; }
     const s = m.summary, na = (value, show = String) => value === null ? '<span class="fd-muted">n/a</span>' : escape(show(value));
     const tile = (label, value, note) => `<div class="fd-tile"><span class="fd-energy-label">${label}</span><strong>${value}</strong><span class="fd-caption">${note}</span></div>`;
     $('metrics').innerHTML = '<h2 class="fd-h1">Metrics</h2><p class="fd-desc">How tasks went, derived from recorded evidence and stage history. Archived tasks are included; reviews of other people’s pull requests are not.</p>'
@@ -716,14 +730,17 @@
   }
   // Opens what the address names; unknown parts are ignored.
   function applyHash(fromHistory = false) {
-    const [name, id, part] = location.hash.slice(1).split('/').map(decodeURIComponent);
+    let parts;
+    // An address someone mistyped is ignored, like any other unknown part.
+    try { parts = location.hash.slice(1).split('/').map(decodeURIComponent); } catch { return; }
+    const [name, id, part] = parts;
     if (!document.querySelector(`.fd-nav [data-view="${CSS.escape(name || '')}"]`)) return;
     applying = true;
     if (name === 'work' && id && data.issues.some(i => i.id === id)) { selected = id; tab = part || ''; queueMode = 'list'; }
     // "#work" alone is the board, or a list with no task open.
     else if (name === 'work' && !id && fromHistory && data.issues.length) queueMode = 'board';
     show(name);
-    if (name === 'work') { renderQueue(); renderDetail(); }
+    if (name === 'work') { renderQueue(); renderDetail(); if (id && selected === id) showPane('detail'); }
     applying = false; placed = true;
   }
   addEventListener('hashchange', () => applyHash(true));
@@ -751,7 +768,7 @@
     if (e.target.closest('[data-close]')) { const id = peek; peek = null; renderBoard(); document.querySelector(`[data-peek="${CSS.escape(id)}"]`)?.focus(); return; }
     const open = e.target.closest('[data-open]'); if (open) return openTask(peek, open.dataset.open);
     // The drawer shows the same panel as the task page, so its buttons take the same path.
-    if (e.target.closest('[data-action], [data-unblock], [data-post-questions], [data-create-pr], [data-post-review], [data-copy-doc], [data-copy-prompt], [data-run-agent], [data-stop-agent], .fd-now a.fd-btn, [data-tab]')) { selected = peek; const twin = e.target.closest('[data-tab]'); if (twin) return openTask(peek, twin.dataset.tab); $('detail').dispatchEvent(new CustomEvent('fd-act', { detail: e.target })); }
+    if (e.target.closest('[data-action], [data-unblock], [data-post-questions], [data-create-pr], [data-post-review], [data-copy-doc], [data-copy-prompt], [data-run-agent], [data-stop-agent], .fd-now a.fd-btn, [data-tab]')) { selected = peek; renderQueue(); renderDetail(); const twin = e.target.closest('[data-tab]'); if (twin) return openTask(peek, twin.dataset.tab); $('detail').dispatchEvent(new CustomEvent('fd-act', { detail: e.target })); }
   };
   $('detail').addEventListener('toggle', e => { if (e.target.open && e.target.dataset?.log) loadLog(e.target); }, true);
   document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => show(button.dataset.view));
@@ -815,7 +832,7 @@
     if (agentButton) {
       const i = task(), stop = agentButton.hasAttribute('data-stop-agent');
       agentButton.disabled = true;
-      post(stop ? '/api/agent/stop' : '/api/agent/run', { id: i.id }).then(result => { notice(stop ? `${i.id}: the agent is stopping.` : result.status === 'queued' ? `${i.id}: waiting for a free slot.` : `${i.id}: the agent started. This page follows it.`); refresh(); }, error => { notice(error.message, true); agentButton.disabled = false; });
+      post(stop ? '/api/agent/stop' : '/api/agent/run', { id: i.id }).then(result => { notice(stop ? `${i.id}: the agent is stopping.` : result.status === 'queued' ? `${i.id}: waiting for a free slot.` : `${i.id}: the agent started. This page follows it.`); data.stamp = ''; refresh(); }, error => { notice(error.message, true); agentButton.disabled = false; });
     }
     if (e.target.closest('.fd-now a.fd-btn:not([data-agent-log])')) { launched[task().id] = Date.now(); setTimeout(renderDetail, 300); }
     if (e.target.closest('[data-copy-prompt]')) {
@@ -961,7 +978,7 @@
     lost = false; if (!served) $('connection').textContent = 'Static snapshot';
     if (next.stamp === data.stamp) return;
     // Keep drafts and open explanations stable while the user interacts.
-    if (data.stamp && (document.querySelector('dialog[open], #detail .fd-body details[open]:not(.fd-keep)') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) { paused = true; tick(); return; }
+    if (data.stamp && (document.querySelector('dialog[open]') || [...document.querySelectorAll('#detail .fd-body details[open]:not(.fd-keep)')].some(el => el.offsetParent !== null) || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) { paused = true; tick(); return; }
     paused = false;
     data = next;
     if (!data.issues.some(i => i.id === peek)) peek = null;
@@ -972,7 +989,7 @@
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()}`;
     // A redraw replaces the focused element; the one that stands for the same thing gets focus back.
     const held = document.activeElement, holder = held?.closest?.('section[id], aside[id], article[id]');
-    const key = held && holder && ['task', 'peek', 'tab', 'node', 'edit', 'mode', 'openTask', 'action', 'unblock', 'createPr', 'postReview', 'open'].find(k => held.dataset?.[k] !== undefined);
+    const key = held && holder && ['task', 'peek', 'tab', 'node', 'edit', 'mode', 'openTask', 'action', 'unblock', 'createPr', 'postReview', 'open', 'runAgent', 'stopAgent'].find(k => held.dataset?.[k] !== undefined);
     render();
     if (key && !document.contains(held)) holder.querySelector(`[data-${key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)}="${CSS.escape(held.dataset[key])}"]`)?.focus({ preventScroll: true });
     if (!hashReady) { hashReady = true; if (location.hash.length > 1) applyHash(); else syncHash(); }
@@ -1005,7 +1022,8 @@
       if (!data.issues.length) return;
       // On the board the cards are walked in column order and the side panel follows.
       const order = onBoard ? COLUMNS.flatMap(([key]) => data.issues.filter(i => columnOf(i) === key)) : data.issues;
-      const next = order[(order.findIndex(i => i.id === (onBoard ? peek : selected)) + step + order.length) % order.length].id;
+      const at = order.findIndex(i => i.id === (onBoard ? peek : selected));
+      const next = order[at === -1 ? (step > 0 ? 0 : order.length - 1) : (at + step + order.length) % order.length].id;
       if (onBoard) { peek = next; renderBoard(); document.querySelector(`[data-peek="${CSS.escape(next)}"]`)?.focus(); } else openTask(next);
     };
     const keys = {
