@@ -56,7 +56,9 @@ const at = (day, hour) => new Date(`${day}T${pad(hour)}:00:00`).toISOString();
 
 before(() => {
   // "--created" returns one opened pull request, "--merged-at" one merged; GH_FAIL switches a failure on.
-  stub('gh', `if [ -n "$GH_FAIL" ]; then echo "$GH_FAIL" >&2; exit 4; fi
+  stub('gh', `if [ -n "$GH_ARGS" ]; then echo "$*" >> "$GH_ARGS"; fi
+if [ -n "$GH_NULL" ]; then echo null; exit 0; fi
+if [ -n "$GH_FAIL" ]; then echo "$GH_FAIL" >&2; exit 4; fi
 case "$*" in
   *--created*) echo '[{"number":9,"title":"fix(app): add","url":"https://github.com/acme/app/pull/9","repository":{"nameWithOwner":"acme/app"}}]';;
   *--merged-at*) echo '[{"number":8,"title":"docs(app): readme","url":"https://github.com/acme/app/pull/8","repository":{"nameWithOwner":"acme/app"}}]';;
@@ -87,6 +89,9 @@ test('the day is today, yesterday or a date, and anything else is rejected', () 
   assert.equal(reportDay('yesterday'), YESTERDAY);
   assert.equal(reportDay('2026-01-31'), '2026-01-31');
   assert.throws(() => reportDay('last week'), /"last week" is not a day\. Use today, yesterday, or a date such as/);
+  // A day that is not on the calendar is not read as a day of the next month.
+  for (const day of ['2026-02-31', '2026-13-01', '2026-00-10', '2025-02-29']) assert.throws(() => reportDay(day), /is not a day/, day);
+  assert.equal(reportDay('2024-02-29'), '2024-02-29');
 });
 
 test('a task reports the stages it passed on the day, its milestones and its check runs', () => {
@@ -170,3 +175,20 @@ test('the server serves the report and writes the plain version only with the to
     server.close();
   }
 });
+
+test('pull requests are asked for by the day as this machine counts it, and an answer that is not a list is said, not thrown', () => {
+  process.env.GH_ARGS = path.join(tmp, 'gh-args.txt');
+  try {
+    dayFacts('2026-11-19');
+    const asked = fs.readFileSync(process.env.GH_ARGS, 'utf8');
+    // A bare date would be a day in UTC on GitHub's side.
+    assert.match(asked, /--created 2026-11-19T00:00:00[+-]\d{2}:\d{2}\.\.2026-11-19T23:59:59[+-]\d{2}:\d{2} /);
+    assert.match(asked, /--merged-at 2026-11-19T00:00:00[+-]\d{2}:\d{2}\.\.2026-11-19T23:59:59[+-]\d{2}:\d{2} /);
+    process.env.GH_NULL = '1';
+    assert.match(dayFacts('2026-11-19').pullRequests.error, /GitHub pull requests are not included: the answer was not what GitHub sends/);
+  } finally {
+    delete process.env.GH_ARGS;
+    delete process.env.GH_NULL;
+  }
+});
+

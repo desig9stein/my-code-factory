@@ -181,3 +181,60 @@ test('the board asks GitHub on request and sends feedback only with its token', 
     server.closeAllConnections();
   }
 });
+
+test('feedback written while the user decides stays new, and checks are not called running when they failed', () => {
+  const id = task(20);
+  const early = new Date(Date.now() - 120_000).toISOString().replace(/\.\d+Z$/, 'Z');
+  const late = new Date(Date.now() + 120_000).toISOString().replace(/\.\d+Z$/, 'Z');
+  const note = (body, at) => ({ author: { login: 'reviewer' }, state: 'COMMENTED', body, submittedAt: at });
+  answer(view({ statusCheckRollup: [], reviews: [note('First.', early)], comments: [] }), []);
+  fetchFeedback(id);
+  assert.deepEqual(feedbackView(loadState(id)).notes.map((n) => n.body), ['First.']);
+  // The reviewer writes again after the board asked and before the user sends: the second note was never on screen.
+  sendFeedback(id, 'Fix the first thing.');
+  const back = loadState(id);
+  Object.assign(back, { stage: 'pr-opened', stageSince: new Date().toISOString(), approvedSha: HEAD, gatesSha: HEAD });
+  saveState(back);
+  answer(view({ statusCheckRollup: [], reviews: [note('First.', early), note('Second, written meanwhile.', late)], comments: [] }), []);
+  fetchFeedback(id);
+  assert.deepEqual([feedbackView(loadState(id)).notes.map((n) => n.body), feedbackView(loadState(id)).needsYou], [['Second, written meanwhile.'], true]);
+
+  // GitHub's pull request is at another commit, asked after the last update: its failed checks are shown as failed.
+  const moved = task(21);
+  answer(view({ headRefOid: 'c'.repeat(40), reviews: [], comments: [] }), []);
+  fetchFeedback(moved);
+  const seen = feedbackView(loadState(moved));
+  assert.deepEqual([seen.failed.length, seen.pending, seen.movedOnGitHub, seen.outdated, seen.needsYou], [2, 1, true, false, true]);
+  // An answer from before the last update says nothing about the new commit, and says so.
+  const later = loadState(moved);
+  later.stageSince = new Date(Date.now() + 60_000).toISOString();
+  saveState(later);
+  const old = feedbackView(loadState(moved));
+  assert.deepEqual([old.failed.length, old.pending, old.outdated, old.movedOnGitHub, old.needsYou], [0, 0, true, false, false]);
+});
+
+test('what does not fit is counted, a deleted account still counts, and feedback is not sent where nothing can be fixed', () => {
+  const id = task(22);
+  const at = (n) => new Date(Date.now() - (200 - n) * 1000).toISOString();
+  const many = Array.from({ length: 100 }, (_, n) => ({ author: { login: 'reviewer' }, body: `Comment ${n}. ${'word '.repeat(60)}`, createdAt: at(n) }));
+  answer(view({ statusCheckRollup: [], reviews: [{ author: null, state: 'CHANGES_REQUESTED', body: '', submittedAt: at(150) }], comments: many }), []);
+  const stored = fetchFeedback(id);
+  assert.deepEqual([stored.notes.length, stored.omitted.notes], [40, 61]);
+  assert.equal(stored.notes.at(-1).author, 'a deleted account');
+  const shown = feedbackView(loadState(id));
+  assert.equal(shown.omitted.notes, 61);
+  assert.ok(shown.draft.length <= 6000);
+  assert.match(shown.draft, /\n- \(More is on the pull request; this list was cut to fit\.\)$/);
+  // An answer that is not GitHub's keeps the last good one and gives a reason a person can read.
+  for (const body of ['', 'null', '<html>502</html>']) {
+    fs.writeFileSync(process.env.GH_VIEW, body);
+    assert.match(fetchFeedback(id).error, /GitHub could not be asked: the answer was not what GitHub sends/);
+    assert.equal(feedbackView(loadState(id)).notes.length, 40);
+  }
+  // A merged pull request, and an archived task, take no feedback.
+  answer(view({ state: 'MERGED', mergedAt: at(199) }), []);
+  fetchFeedback(id);
+  assert.throws(() => sendFeedback(id, 'One more thing.'), /The pull request of demo-22 is merged, so there is nothing left to fix on it/);
+  const gone = task(23, { archived: true });
+  assert.throws(() => sendFeedback(gone, 'One more thing.'), /demo-23 is archived/);
+});

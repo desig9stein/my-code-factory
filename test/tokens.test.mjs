@@ -75,3 +75,21 @@ test('hooks record tool, skill, agent and MCP use per stage without keeping argu
   linkSession(id, file);
   assert.equal(issueTokens({ id, createdAt: state.createdAt, history: [] }, { force: true }).output, 42);
 });
+
+test('a message without a single count is unavailable, text is not joined on as a number, and a round figure reads right', async () => {
+  const { formatTokens } = await import('../lib/tokens.mjs');
+  const id = 'app-90';
+  fs.mkdirSync(path.join(root, 'issues', id), { recursive: true });
+  const line = (messageId, usage) => JSON.stringify({ type: 'assistant', timestamp: '2026-02-01T00:00:00.000Z', message: { id: messageId, content: [{ type: 'tool_use', input: { command: `codeignite status ${id}` } }], usage } });
+  const file = path.join(root, 'odd.jsonl');
+  // Every count missing: this is not "zero tokens used".
+  fs.writeFileSync(file, line('n', { input_tokens: null, output_tokens: null, cache_creation_input_tokens: null, cache_read_input_tokens: null }));
+  linkSession(id, file);
+  const none = issueTokens({ id, createdAt: state.createdAt, history: [] }, { force: true });
+  assert.deepEqual([none.availability, none.total], ['unavailable', 0]);
+  // Counts written as text or as nonsense are left out, not joined on: "100" and 20 are not "10020".
+  fs.writeFileSync(file, `${line('s', { input_tokens: '100', output_tokens: 20 })}\n${line('t', { input_tokens: -5, output_tokens: Number.NaN, cache_read_input_tokens: 7 })}`);
+  const some = issueTokens({ id, createdAt: state.createdAt, history: [] }, { force: true });
+  assert.deepEqual([some.input, some.output, some.cacheRead, some.total, some.availability], [0, 20, 7, 27, 'available']);
+  assert.deepEqual([999, 1000, 999_949, 999_950, 999_999, 1_500_000].map(formatTokens), ['999', '1.0k', '999.9k', '1.0M', '1.0M', '1.5M']);
+});
