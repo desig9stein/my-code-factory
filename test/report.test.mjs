@@ -156,7 +156,7 @@ test('the CLI prints the report, and --plain adds the rewrite', () => {
 });
 
 test('the server serves the report and writes the plain version only with the token', async () => {
-  const server = await startServer(0);
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];

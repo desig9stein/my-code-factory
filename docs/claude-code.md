@@ -46,4 +46,6 @@ Other harnesses that read the Agent Skills format can use the same two folders.
 
 Keep your harness's own sandbox and permissions enabled. Shell-pattern guards cannot cover every possible program, protocol, or malicious tool. A process with unrestricted filesystem access can bypass these conventions.
 
+The board answers only a browser that `factory board` paired from the user's own terminal. An agent session that runs `factory board` gets the plain address, which shows nothing without the pairing. The pairing key, the pairing calls and commands that hide that the caller is an agent are refused by the pre-tool hook, and sessions the board starts carry a rule that refuses reading the key. These are rules about commands, like the rest of the guard: a process outside any harness that reads your files can still read the key, so keep the operating-system sandbox on for unattended agents.
+
 The human runs the board and handles approval. Agents use `factory status <id>` and recorded CLI operations. Follow [the workflow](workflow.md), plus each project's own instructions and verification commands.

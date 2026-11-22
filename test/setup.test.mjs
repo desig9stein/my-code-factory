@@ -189,7 +189,7 @@ test('remove is refused while a task of the project is in flight', () => {
 });
 
 test('the server refuses project update, add and remove without the token', async () => {
-  server = await startServer(0);
+  server = await startServer(0, { pairing: false });
   base = `http://127.0.0.1:${server.address().port}`;
   token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];
   for (const route of ['update', 'add', 'remove']) {
