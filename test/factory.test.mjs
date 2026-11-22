@@ -688,9 +688,14 @@ test('a copied task folder, an impossible issue number and an archived task are 
   assert.deepEqual(fs.readdirSync(path.join(ROOT, 'worktrees')).filter((name) => /e\+|^demo-0$|9007/.test(name)), []);
   assert.match(cli('new', 'demo#41', '--title').out, /--title needs a value/);
   assert.equal(fs.existsSync(path.join(ROOT, 'worktrees', 'demo-41')), false);
+  // Commands given too little say what they need.
+  assert.match(cli('run', 'demo-40').out, /run needs the name of what to run/);
+  assert.match(cli('verdict', 'demo-40', 'pass', '--report', tmp).out, /verdict needs --report <file>/);
+  assert.match(cli('review', 'demo#77', '--from', path.join(tmp, 'no-such.json')).out, /cannot be read as a pull request \(there is no such file\)/);
   // An archived task says so, and is not archived twice.
   assert.equal(cli('archive', 'demo-40', '--delete-branch').status, 0);
   assert.match(cli('archive', 'demo-40').out, /demo-40 is archived already/);
+  for (const command of [['block', 'demo-40', 'x'], ['advance', 'demo-40'], ['run', 'demo-40', 'lint'], ['note', 'demo-40', 'reproduce', 'x']]) assert.match(cli(...command).out, /demo-40 is archived, so "\w+" has nothing to work on/, command[0]);
   assert.match(cli('new', 'demo#40', '--title', 'Again').out, /demo-40 exists and is archived/);
   // Names every object answers to are not commands or projects.
   for (const name of ['toString', 'constructor', 'hasOwnProperty']) assert.equal(cli(name).status, 1, name);

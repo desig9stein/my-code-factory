@@ -124,7 +124,16 @@ function fetchIssue(repo, number) {
 }
 
 function fetchPr(repo, number, fromFile) {
-  if (fromFile) return JSON.parse(fs.readFileSync(fromFile, 'utf8'));
+  if (fromFile) {
+    let pr = null;
+    try {
+      pr = JSON.parse(fs.readFileSync(String(fromFile), 'utf8'));
+    } catch (err) {
+      throw new Error(`--from ${fromFile} cannot be read as a pull request (${err.code === 'ENOENT' ? 'there is no such file' : err.code === 'EISDIR' ? 'it is a folder' : 'it is not JSON'}). It holds what "gh pr view --json" prints.`);
+    }
+    if (!pr || typeof pr !== 'object' || typeof pr.headRefOid !== 'string') throw new Error(`--from ${fromFile} is not a pull request as "gh pr view --json" prints it: it names no head commit.`);
+    return pr;
+  }
   const fields = 'number,title,body,author,url,state,isDraft,baseRefName,headRefName,headRefOid,labels,files,comments,reviews,additions,deletions';
   const r = run('gh', ['pr', 'view', String(number), '-R', repo.remote, '--json', fields]);
   if (r.status !== 0) throw new Error(`gh pr view ${number} -R ${repo.remote} failed: ${r.stderr.trim()}`);
@@ -422,6 +431,7 @@ const commands = {
   run(args) {
     const [id, name] = args._;
     loadState(id);
+    if (typeof name !== 'string' || !name) throw new Error('run needs the name of what to run: a gate of the project, "install" or "setup". Example: codeignite run app-42 test.');
     ensurePort(id);
     const state = sync(loadState(id));
     const repo = getRepo(state.repo);
@@ -503,7 +513,7 @@ const commands = {
   verdict(args) {
     const [id, verdict] = args._;
     if (!['pass', 'fail'].includes(verdict)) throw new Error(`verdict takes pass or fail, got "${verdict}".`);
-    if (!args.report || !fs.existsSync(args.report)) throw new Error('verdict needs --report <file> with the per-claim findings.');
+    if (typeof args.report !== 'string' || !fs.existsSync(args.report) || !fs.statSync(args.report).isFile()) throw new Error('verdict needs --report <file> with the per-claim findings.');
     const state = sync(loadState(id));
     const report = fs.readFileSync(args.report, 'utf8');
     if (report.trim().length < 200) throw new Error('The report is too short. List each claim with the command that checked it and the result.');
@@ -896,10 +906,17 @@ if (path.basename(process.argv[1] || '').replace(/\.mjs$/, '') === 'factory' && 
   console.error('Note: "factory" is now "codeignite" (short: "cig"). The old name keeps working.');
 }
 const LOCKED = ['note', 'verdict', 'advance', 'block', 'unblock', 'reject', 'pr', 'archive', 'posted'];
+// Commands that change a task. An archived task is a closed record: its folder is gone and nothing works on it.
+const CHANGING = ['note', 'verdict', 'advance', 'block', 'unblock', 'reject', 'approve', 'pr', 'posted', 'run', 'regress', 'work', 'refresh'];
 const [command = 'help', ...rest] = process.argv.slice(2);
 try {
   if (!Object.hasOwn(commands, command)) throw new Error(`Unknown command "${command}". Run "codeignite help" for the list.`);
   const parsed = parseArgs(rest);
+  if (CHANGING.includes(command) && typeof parsed._[0] === 'string' && exists(parsed._[0])) {
+    let closed = false;
+    try { closed = loadState(parsed._[0]).archived === true; } catch { /* The command itself says what is wrong with the task. */ }
+    if (closed) throw new Error(`${parsed._[0]} is archived, so "${command}" has nothing to work on. Its record stays in ${issueDir(parsed._[0])}.`);
+  }
   // A command that reads a task, decides and writes it back holds the task for that time, so the board,
   // a hook or another command cannot change it in between. Long runs lock only while they record.
   if (LOCKED.includes(command) && parsed._[0]) withTask(parsed._[0], () => commands[command](parsed));

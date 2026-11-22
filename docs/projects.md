@@ -85,7 +85,7 @@ Example `repos.json`:
 }
 ```
 
-Paths resolve relative to the configured workspace; absolute project paths also work. Project entries override defaults. Gate commands run inside the task worktree; a gate can set `cwd` for a subdirectory. Commands are trusted local shell commands, so review imported configuration before running it.
+Paths resolve relative to the configured workspace; absolute project paths also work. Project entries override defaults. Gate commands run inside the task worktree; a gate can set `cwd` for a subdirectory. Commands are trusted local shell commands, so review imported configuration before running it. `codeignite import` lists every command the file carries before anything applies: install, setup, teardown and each check, also for a project you have not cloned yet, and `codeignite add` says a waiting setup or teardown again when it starts to apply. It asks with "no" as the answer to Enter. Only the fields a shared file is for are taken from it; a folder path, and a command that hides text with control characters, are refused.
 
 Each recorded command stops after 30 minutes and is recorded as failed. Set `timeoutMinutes` on a project or on one gate to change that (`0` disables the limit). `trivialMaxFiles` (default 2) is the number of changed files the trivial tier allows. A gate's `cwd` and the `--cwd` option must stay inside the task worktree.
 
