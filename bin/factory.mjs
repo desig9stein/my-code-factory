@@ -17,6 +17,7 @@ import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyCha
 import { factoryRoot, issueDir, subdirOf, workspace, worktreesDir } from '../lib/paths.mjs';
 import { buildGraph, coverage, detectLinks, reach } from '../lib/graph.mjs';
 import { factoryMetrics } from '../lib/metrics.mjs';
+import { withTask } from '../lib/lock.mjs';
 import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
 import { dayFacts, writePlainReport } from '../lib/report.mjs';
@@ -390,7 +391,7 @@ const commands = {
     const record = runRecorded(state, { ...spec, actor, timeoutMinutes: spec.timeoutMinutes ?? repo.timeoutMinutes });
     printRecord(state, record);
     if (!record.ok && ['gate', 'step'].includes(spec.kind)) {
-      const capped = capAttempts(loadState(id));
+      const capped = withTask(id, () => capAttempts(loadState(id)));
       if (capped) console.log(`\nBLOCKED: ${capped} Stop and tell the user.`);
     }
     writeBoard();
@@ -781,10 +782,15 @@ function statusOne(state) {
   for (const h of state.history) console.log(`  ${h.at.slice(0, 16).replace('T', ' ')}  ${h.stage.padEnd(10)} ${h.note || ''}`);
 }
 
+const LOCKED = ['note', 'verdict', 'advance', 'block', 'unblock', 'reject', 'pr', 'archive', 'posted'];
 const [command = 'help', ...rest] = process.argv.slice(2);
 try {
   if (!commands[command]) throw new Error(`Unknown command "${command}". Run "factory help" for the list.`);
-  await commands[command](parseArgs(rest));
+  const parsed = parseArgs(rest);
+  // A command that reads a task, decides and writes it back holds the task for that time, so the board,
+  // a hook or another command cannot change it in between. Long runs lock only while they record.
+  if (LOCKED.includes(command) && parsed._[0]) withTask(parsed._[0], () => commands[command](parsed));
+  else await commands[command](parsed);
 } catch (err) {
   console.error(`factory: ${err.message}`);
   process.exit(1);

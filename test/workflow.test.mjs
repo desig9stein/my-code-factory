@@ -51,7 +51,7 @@ const skill = (name, description) => `---\nname: ${name}\ndescription: ${descrip
 
 // Puts the task at a stage with a type, clearing what earlier tests left behind.
 function at(stage, type, extra = {}) {
-  saveState({ id: ID, kind: 'issue', repo: 'app', issue: 5, title: 'Task', type, stage, stageSince: new Date().toISOString(), worktree: APP, branch: 'task', base: 'main', history: [], ...extra });
+  saveState({ id: ID, kind: 'issue', repo: 'app', issue: 5, title: 'Task', type, stage, stageSince: new Date().toISOString(), worktree: APP, branch: 'task', base: 'main', history: [], ...extra }, { replace: true });
   return loadState(ID);
 }
 const step = () => advance(loadState(ID), getRepo('app'));
