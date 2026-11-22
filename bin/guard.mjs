@@ -61,8 +61,9 @@ try {
     }
   }
 } catch (err) {
-  // A guard failure refuses outward actions only when the payload asked for one.
-  if (mode === 'pre' && /\bpush\b|gh\s+(pr|issue)/.test(JSON.stringify(input.tool_input || {}))) {
+  // A guard that cannot check does not wave an outward action through: a push, a GitHub command, or a tool of another service that publishes.
+  const outward = /\bpush\b|gh\s+(pr|issue|api)/.test(JSON.stringify(input.tool_input || {})) || /^mcp__.*(push|pull_request|comment|review|merge|create_or_update_file)/i.test(String(input.tool_name || ''));
+  if (mode === 'pre' && outward) {
     process.stdout.write(
       JSON.stringify({
         hookSpecificOutput: {

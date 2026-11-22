@@ -115,6 +115,18 @@ test('an agent cannot approve or write state and evidence', () => {
   assert.equal(bash(`node factory/bin/factory.mjs approve ${ID}`).deny, true);
   assert.equal(bash(`echo '{}' > factory/issues/${ID}/state.json`).deny, true);
   assert.equal(bash(`cat factory/issues/${ID}/state.json 2>/dev/null`).deny, false);
+  // The same actions written another way: a quoted word, a file named from inside its folder, the GitHub API.
+  assert.equal(bash(`node factory/bin/factory.mjs "approve" ${ID}`).deny, true);
+  assert.equal(bash(`cd factory/issues/${ID} && echo '{}' > state.json`).deny, true);
+  assert.equal(bash(`cd factory/issues/${ID} && rm -rf evidence`).deny, true);
+  assert.equal(bash(`cd factory/issues/${ID} && cat state.json && echo done > notes.md`).deny, true);
+  assert.equal(bash(`cd factory/issues/${ID} && ls`).deny, false);
+  assert.equal(bash(`cd factory/issues/${ID} && echo "Type: bug" > triage.md`).deny, false);
+  assert.equal(bash('gh api repos/acme/demo/issues/7/comments -f body=hi', WT).deny, true);
+  assert.equal(bash('gh api repos/acme/demo/pulls -f head=x -f base=main', WT).deny, true);
+  assert.equal(bash('gh api -X POST repos/acme/demo/issues/7/comments --input body.json', WT).deny, true);
+  assert.equal(bash('gh api repos/acme/demo/pulls/7/files', WT).deny, false);
+  assert.equal(bash('gh api repos/acme/demo/pulls', WT).deny, false);
   const edit = (file) => decide({ tool_name: 'Edit', tool_input: { file_path: file }, cwd: WORKSPACE });
   assert.equal(edit(path.join(ISSUE, 'state.json')).deny, true);
   assert.equal(edit(path.join(ISSUE, 'evidence/001-lint.json')).deny, true);
@@ -268,6 +280,16 @@ test('the pre-tool hook records an allowed call for the task and skips a refused
   assert.equal(hook({ cwd: WT, tool_name: 'Bash', tool_use_id: 'toolu_a', tool_input: { command: 'npm test -- --secret-flag' } }).stdout, '');
   assert.match(hook({ cwd: WT, tool_name: 'Bash', tool_input: { command: 'git push -u origin HEAD' } }).stdout, /"deny"/);
   assert.equal(hook({ cwd: WORKSPACE, tool_name: 'Read', tool_input: { file_path: '/elsewhere/file' } }).status, 0);
+  // A guard that cannot read the registry does not wave an outward action through, whichever tool asks.
+  const registryFile = path.join(ROOT, 'repos.json'), registryText = fs.readFileSync(registryFile, 'utf8');
+  fs.writeFileSync(registryFile, '{broken');
+  try {
+    assert.match(hook({ cwd: WT, tool_name: 'mcp__github__create_pull_request', tool_input: { head: 'x' } }).stdout, /"ask".*could not check/);
+    assert.match(hook({ cwd: WT, tool_name: 'Bash', tool_input: { command: 'git push' } }).stdout, /"ask"/);
+    assert.equal(hook({ cwd: WORKSPACE, tool_name: 'mcp__github__get_file_contents', tool_input: { path: 'a' } }).stdout, '');
+  } finally {
+    fs.writeFileSync(registryFile, registryText);
+  }
   const added = lines().slice(before);
   assert.deepEqual(added.map((l) => [l.stage, l.kind, l.label, l.detail, l.use]), [['gates', 'tool', 'Bash', 'npm', 'toolu_a']]);
   const activity = boardData().issues.find((i) => i.id === ID).activity;
