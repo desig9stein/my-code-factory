@@ -71,12 +71,34 @@ test('a lock is entered again by its holder, refused to others, and taken over f
   assert.equal(withLock(file, () => 'ran', { tryOnly: true, busy: 'busy' }), 'busy');
   assert.throws(() => withLock(file, () => 'ran', { wait: 150, what: 'app-1' }), new RegExp(`Another Codeignite command \\(process ${process.ppid}\\) is changing app-1 and did not finish`));
   assert.equal(fs.existsSync(file), true);
-  // A holder that no longer runs, and one that held far too long, lose the lock.
+  // A holder that no longer runs loses the lock.
   write(file, JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() }));
   assert.equal(withLock(file, () => 'ran', { wait: 500 }), 'ran');
+  // A holder that still runs keeps it past two minutes: a teardown command takes that long inside the lock.
+  const old = (minutes) => fs.utimesSync(file, new Date(Date.now() - minutes * 60_000), new Date(Date.now() - minutes * 60_000));
   write(file, JSON.stringify({ pid: process.ppid, at: '2020-01-01T00:00:00.000Z' }));
-  fs.utimesSync(file, new Date(Date.now() - 10 * 60_000), new Date(Date.now() - 10 * 60_000));
+  old(10);
+  assert.throws(() => withLock(file, () => 'ran', { wait: 150 }), /did not finish/);
+  // After an hour the number is taken to belong to another program.
+  old(90);
   assert.equal(withLock(file, () => 'ran', { wait: 500 }), 'ran');
+  // A lock file that cannot be read, or a folder in its place, blocks for two minutes and is named meanwhile.
+  for (const damaged of ['not json{', '{"pid":12', '[1]']) {
+    write(file, damaged);
+    assert.throws(() => withLock(file, () => 'ran', { wait: 100 }), /Its lock file .*a\.lock cannot be read; it is removed by itself two minutes after it was written\./);
+    old(3);
+    assert.equal(withLock(file, () => 'ran', { wait: 500 }), 'ran');
+  }
+  fs.mkdirSync(file);
+  old(3);
+  assert.equal(withLock(file, () => 'ran', { wait: 500 }), 'ran');
+  // A holder whose lock was taken over and taken again does not remove the new holder's lock when it ends.
+  withLock(file, () => {
+    fs.rmSync(file);
+    write(file, JSON.stringify({ pid: process.ppid, at: new Date().toISOString(), nonce: 'theirs' }));
+  });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).nonce, 'theirs');
+  fs.rmSync(file);
   // An error inside leaves no lock behind.
   assert.throws(() => withLock(file, () => { throw new Error('inside'); }), /inside/);
   assert.equal(fs.existsSync(file), false);

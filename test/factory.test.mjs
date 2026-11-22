@@ -377,6 +377,18 @@ test('a PR body edited after the verdict needs a new verdict', () => {
 
 test('ready still refuses the push until approval', () => {
   assert.equal(bash('git push -u origin HEAD', WT).deny, true);
+  // What let the task reach "ready" is looked at again when it is approved.
+  const body = path.join(ISSUE, 'pr-body.md');
+  const judged = fs.readFileSync(body, 'utf8');
+  write(body, `${judged}\nA claim the verifier never saw.\n`);
+  assert.throws(() => approve(loadState(ID)), /cannot be approved as it stands:\n- pr-body\.md changed after the verdict/);
+  write(body, judged);
+  write(path.join(WT, 'stray.txt'), 'x');
+  assert.throws(() => approve(loadState(ID)), /The worktree has uncommitted changes/);
+  fs.rmSync(path.join(WT, 'stray.txt'));
+  assert.equal(cli('block', ID, 'a question is open').status, 0);
+  assert.throws(() => approve(loadState(ID)), /It is blocked: a question is open/);
+  assert.equal(cli('unblock', ID).status, 0);
   approve(loadState(ID));
   assert.equal(bash('git push -u origin HEAD', WT).deny, false);
 });
@@ -607,4 +619,80 @@ test('one damaged task or a removed project is reported and does not hide the ot
   assert.match(cli('graph').out, /repos\.json is not valid JSON/);
   write(registry, kept);
   for (const id of ['demo-30', 'demo-31']) assert.equal(cli('archive', id, '--delete-branch').status, 0);
+});
+
+test('evidence that is removed, forged or unreadable is found, and one bad file does not stop the task list', async () => {
+  const crypto = await import('node:crypto');
+  assert.equal(cli('new', 'demo#40', '--title', 'Sealed task').status, 0);
+  const dir = path.join(ROOT, 'issues', 'demo-40', 'evidence');
+  assert.equal(loadState('demo-40').sealed, true);
+  assert.deepEqual(verifyChain('demo-40'), []);
+  cli('run', 'demo-40', 'lint');
+  cli('run', 'demo-40', 'lint');
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort();
+  assert.equal(files.length, 2);
+  const last = path.join(dir, files[1]);
+  const kept = fs.readFileSync(last, 'utf8');
+  // The newest record removed: the links between the others still hold, the count does not.
+  fs.rmSync(last);
+  assert.match(verifyChain('demo-40').join(' '), /2 evidence record\(s\) were written and 1 is there: the newest were removed/);
+  // A record rewritten with its hash worked out again.
+  const forged = { ...JSON.parse(kept), durationMs: 1 };
+  delete forged.hash;
+  forged.hash = crypto.createHash('sha256').update(JSON.stringify(forged)).digest('hex');
+  write(last, JSON.stringify(forged));
+  assert.match(verifyChain('demo-40').join(' '), /The newest evidence record is not the one that was written last/);
+  // The sealed count itself removed.
+  write(last, kept);
+  const head = path.join(dir, '.head');
+  const seal = fs.readFileSync(head, 'utf8');
+  fs.rmSync(head);
+  assert.match(verifyChain('demo-40').join(' '), /The sealed count of the evidence is missing or was edited/);
+  write(head, seal.replace('"count":2', '"count":1'));
+  assert.match(verifyChain('demo-40').join(' '), /The sealed count of the evidence is missing or was edited/);
+  write(head, seal);
+  assert.deepEqual(verifyChain('demo-40'), []);
+  // A file that cannot be read is tampering on its task, and every other command still works.
+  write(last, '{"seq":');
+  assert.match(verifyChain('demo-40').join(' '), /Record file 002-lint\.json cannot be read/);
+  const listed = cli('status');
+  assert.equal(listed.status, 0, listed.out);
+  assert.match(listed.out, /demo-40/);
+  assert.match(cli('advance', 'demo-40').out, /Evidence integrity: Record file 002-lint\.json cannot be read/);
+  write(last, kept);
+  assert.deepEqual(verifyChain('demo-40'), []);
+});
+
+test('a copied task folder, an impossible issue number and an archived task are each refused in plain words', () => {
+  // A copy still says the first task's id; a command on it would change the first task.
+  fs.cpSync(path.join(ROOT, 'issues', 'demo-40'), path.join(ROOT, 'issues', 'demo-40.bak'), { recursive: true });
+  const blocked = cli('block', 'demo-40.bak', 'x');
+  assert.equal(blocked.status, 1);
+  assert.match(blocked.out, /The state of demo-40\.bak cannot be used: it says it is task "demo-40", which is not the name of its folder/);
+  assert.equal(loadState('demo-40').blocked, null);
+  assert.match(cli('status').out, /! demo-40\.bak: The state of demo-40\.bak cannot be used/);
+  fs.rmSync(path.join(ROOT, 'issues', 'demo-40.bak'), { recursive: true });
+  for (const state of ['null', '[]', '{}', '5', '{"id":"demo-40","stage":"intake","repo":"demo"}']) {
+    const file = path.join(ROOT, 'issues', 'demo-40', 'state.json');
+    const good = fs.readFileSync(file, 'utf8');
+    write(file, state);
+    assert.match(cli('next', 'demo-40').out, /The state of demo-40 cannot be used: it /, state);
+    write(file, good);
+  }
+  // Nothing is created for a number that cannot be an issue.
+  for (const ref of ['demo#0', 'demo#99999999999999999999999', 'demo#9007199254740993']) {
+    const made = cli('new', ref, '--title', 'x');
+    assert.equal(made.status, 1, ref);
+    assert.match(made.out, /is not an issue number/);
+  }
+  assert.deepEqual(fs.readdirSync(path.join(ROOT, 'worktrees')).filter((name) => /e\+|^demo-0$|9007/.test(name)), []);
+  assert.match(cli('new', 'demo#41', '--title').out, /--title needs a value/);
+  assert.equal(fs.existsSync(path.join(ROOT, 'worktrees', 'demo-41')), false);
+  // An archived task says so, and is not archived twice.
+  assert.equal(cli('archive', 'demo-40', '--delete-branch').status, 0);
+  assert.match(cli('archive', 'demo-40').out, /demo-40 is archived already/);
+  assert.match(cli('new', 'demo#40', '--title', 'Again').out, /demo-40 exists and is archived/);
+  // Names every object answers to are not commands or projects.
+  for (const name of ['toString', 'constructor', 'hasOwnProperty']) assert.equal(cli(name).status, 1, name);
+  assert.match(cli('new', 'constructor#1', '--title', 'x').out, /Unknown repo "constructor"/);
 });

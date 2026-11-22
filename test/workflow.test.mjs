@@ -476,9 +476,13 @@ test('a task stops for a person after the limit of failed check runs at one step
   assert.match(cli('next', ID).out, /BLOCKED: 3 failed check runs/);
 });
 
-test('unblocking starts the count again', () => {
+test('unblocking starts the count again', async () => {
   saveWorkflow('global', { maxAttempts: 3 });
-  assert.equal(cli('unblock', ID).status, 0);
+  // The attempt limit stops an agent that keeps failing, so a command without a terminal does not lift it.
+  const refused = cli('unblock', ID);
+  assert.equal(refused.status, 1);
+  assert.match(refused.out, /is blocked at the attempt limit, which only a person lifts\. Run this in a terminal outside Claude Code, or use "Unblock" on the board\./);
+  (await import('../lib/stages.mjs')).unblock(loadState(ID));
   assert.equal(attempts(loadState(ID)).failed, 0);
   assert.match(step().problems[0], /Gate "verify" is stale at HEAD/);
   assert.equal(loadState(ID).blocked, null);

@@ -13,10 +13,10 @@ import { addProject, discoverProjects, initialize, preflight } from '../lib/setu
 import { applyImport, exportConfig, planImport } from '../lib/share.mjs';
 import { writeBoard } from '../lib/board.mjs';
 import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } from '../lib/checks.mjs';
-import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyChain } from '../lib/evidence.mjs';
+import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, sealEvidence, verifyChain } from '../lib/evidence.mjs';
 import { factoryRoot, issueDir, subdirOf, workspace, worktreesDir } from '../lib/paths.mjs';
 import { buildGraph, coverage, detectLinks, reach } from '../lib/graph.mjs';
-import { ensurePort, freePort } from '../lib/taskenv.mjs';
+import { ensurePort } from '../lib/taskenv.mjs';
 import { runSetup } from '../lib/tasksetup.mjs';
 import { factoryMetrics } from '../lib/metrics.mjs';
 import { withTask } from '../lib/lock.mjs';
@@ -27,7 +27,7 @@ import { regress } from '../lib/regress.mjs';
 import { dayFacts, writePlainReport } from '../lib/report.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
-import { acceptanceCriteria, advance, approve, archive, capAttempts, consumerImpact, gateStatus, inspect, sendBack, unblock, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
+import { acceptanceCriteria, advance, approvalKey, approve, archive, blockKind, capAttempts, consumerImpact, gateStatus, inspect, sendBack, unblock, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
 import { formatTokens, issueTokens } from '../lib/tokens.mjs';
 import { brokenReferences, formatBrief, resolveWorkflow, stageBrief } from '../lib/workflow.mjs';
 import { exists, head, isDirty, listStates, loadState, move, saveState, sync, unreadableStates } from '../lib/state.mjs';
@@ -237,17 +237,21 @@ const commands = {
     const missing = plan.projects.filter((p) => p.status === 'missing');
     if (missing.length) console.log(`\n${missing.length} project(s) were not found in your workspace (${workspace()}), so they are not registered yet. Their shared settings are kept and apply as soon as you add the project:\n\n  Not cloned yet? Clone it into the workspace, then run "codeignite setup":\n${missing.map((p) => `    git clone git@github.com:${p.remote}.git ${path.join(workspace(), p.folder)}`).join('\n')}\n\n  Cloned somewhere else? Add it where it is:\n    on the board: Projects, "Add a project by its folder"\n    or: codeignite add <key> <directory>`);
     // Imported commands run in a shell later, so every one is shown before it is accepted.
-    if (changing.length) {
+    const withCommands = plan.projects.filter((p) => p.status !== 'same');
+    if (withCommands.length) {
       console.log('\nCommands this file registers. They run on your machine when a task uses them:\n');
-      for (const p of changing) {
-        if (p.entry.install) console.log(`  ${p.key} install: ${p.entry.install}`);
-        for (const g of p.entry.gates) console.log(`  ${p.key} gate ${g.name}: ${g.cmd}`);
+      for (const p of withCommands) {
+        const later = p.status === 'missing' ? ' (applies when you add the project)' : '';
+        if (p.entry.install) console.log(`  ${p.key} install${later}: ${p.entry.install}`);
+        if (p.entry.setup) console.log(`  ${p.key} setup, when a task is created${later}: ${p.entry.setup}`);
+        if (p.entry.teardown) console.log(`  ${p.key} teardown, when a task is archived${later}: ${p.entry.teardown}`);
+        for (const g of p.entry.gates || []) console.log(`  ${p.key} gate ${g.name}${later}: ${g.cmd}`);
       }
     }
     let yes = args.yes === true;
     if (!yes && process.stdin.isTTY) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      yes = !/^n/i.test((await rl.question(`\nApply: ${changing.length} project(s) added or updated, plus the shared defaults and workflow? [Y/n] `)).trim());
+      yes = /^y/i.test((await rl.question(`\nApply: ${changing.length} project(s) added or updated, plus the shared defaults and workflow? Type y to apply. [y/N] `)).trim());
       rl.close();
     } else if (!yes) return console.log('\nNothing applied: there is no terminal to ask in. Read the commands above, then run the import again with --yes.');
     if (!yes) return console.log('Nothing applied.');
@@ -260,13 +264,21 @@ const commands = {
     console.log(`Registered ${args._[0]} (${result.remote}, base ${result.baseBranch}).`);
     if (result.gates.length) console.log(`Gate "${result.gates[0].name}": ${result.gates[0].cmd}`);
     else console.log('No verification command configured. Add a gate on the Projects page of the board before using this project.');
+    // Settings that waited in an imported file come along; their commands are said again here, where they start to apply.
+    if (result.setup) console.log(`Setup, when a task is created: ${result.setup}`);
+    if (result.teardown) console.log(`Teardown, when a task is archived: ${result.teardown}`);
   },
   new(args) {
     const { repo: key, issue: number } = parseRef(args._[0]);
     const repo = getRepo(key);
     const id = `${key}-${number}`;
-    if (exists(id)) throw new Error(`${id} already exists at stage "${loadState(id).stage}".`);
+    issueDir(id);
+    if (exists(id)) {
+      const there = loadState(id);
+      throw new Error(there.archived ? `${id} exists and is archived. Its folder ${issueDir(id)} keeps the record; move it away to start the task again.` : `${id} already exists at stage "${there.stage}".`);
+    }
     if (!fs.existsSync(repo.dir)) throw new Error(`Repo folder ${repo.dir} does not exist.`);
+    for (const name of ['title', 'body', 'type', 'branch']) if (args[name] !== undefined && typeof args[name] !== 'string') throw new Error(`--${name} needs a value.`);
 
     const issue = args.title ? { number, title: args.title, body: args.body || '', labels: [] } : fetchIssue(repo, number);
     const labels = (issue.labels || []).map((l) => l.name.toLowerCase()).join(' ');
@@ -295,7 +307,8 @@ const commands = {
       base: repo.baseBranch,
       baseSha,
       worktree,
-      port: freePort(),
+      port: null,
+      sealed: true,
       createdAt: new Date().toISOString(),
       history: [],
       blocked: null,
@@ -305,6 +318,9 @@ const commands = {
     };
     move(state, 'intake', 'Issue snapshot, branch and worktree created.');
     saveState(state);
+    sealEvidence(id);
+    ensurePort(id);
+    Object.assign(state, loadState(id));
     console.log(`Created ${id}\n  branch   ${branch} (off origin/${repo.baseBranch} at ${baseSha.slice(0, 8)})\n  worktree ${worktree}\n  issue    ${path.join(issueDir(id), 'issue.md')}${state.port ? `\n  port     ${state.port}` : ''}`);
     if (!args['no-setup']) prepare(state, repo);
     if (repo.install) console.log(`Next: codeignite run ${id} install`);
@@ -345,9 +361,12 @@ const commands = {
       approvedSha: null,
       prUrl: pr.url,
     };
-    state.port = freePort();
+    state.sealed = true;
     move(state, 'intake', `PR snapshot and worktree at ${pr.headRefOid.slice(0, 8)}.`);
     saveState(state);
+    sealEvidence(id);
+    ensurePort(id);
+    Object.assign(state, loadState(id));
     if (!args['no-setup']) prepare(state, repo);
     writeBoard();
     console.log(`Created ${id}\n  PR       #${number} by ${state.author}: ${pr.title}\n  head     ${pr.headRefName} at ${pr.headRefOid.slice(0, 8)} (fetched ${headSha.slice(0, 8)}), base origin/${pr.baseRefName}\n  worktree ${worktree}\n  snapshot ${path.join(issueDir(id), 'pr.md')}`);
@@ -523,7 +542,12 @@ const commands = {
   },
 
   unblock(args) {
-    const state = unblock(loadState(args._[0]), { note: args._.slice(1).join(' ') });
+    const blocked = loadState(args._[0]);
+    // The attempt limit stops an agent that keeps failing; only a person lifts it.
+    if (blockKind(blocked) === 'attempts' && (process.env.CLAUDECODE || !process.stdin.isTTY)) {
+      throw new Error(`${blocked.id} is blocked at the attempt limit, which only a person lifts. Run this in a terminal outside Claude Code, or use "Unblock" on the board.`);
+    }
+    const state = unblock(blocked, { note: args._.slice(1).join(' ') });
     writeBoard();
     console.log(`${state.id} resumes at "${state.stage}".`);
   },
@@ -543,6 +567,7 @@ const commands = {
     }
     const state = sync(loadState(args._[0]));
     const repo = getRepo(state.repo);
+    if (!fs.existsSync(state.worktree)) throw new Error(`The folder of ${state.id} is gone (${state.worktree}), so there is no commit to approve.`);
     statusOne(state);
     const stat = tryGit(state.worktree, 'diff', '--stat', `${mergeBase(state)}..HEAD`);
     console.log(`\nDiff against origin/${state.base}:\n${stat}\n`);
@@ -550,10 +575,15 @@ const commands = {
     else console.log(`PR body: ${prBodyPath(state.id)}`);
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     const what = state.kind === 'review' ? `posting this review of ${head(state).slice(0, 8)}` : `the push of ${head(state).slice(0, 8)}`;
+    const shown = approvalKey(state);
     const answer = await rl.question(`\nType "${state.id}" to approve ${what}: `);
     rl.close();
     if (answer.trim() !== state.id) throw new Error('Not approved: the text did not match.');
-    approve(state);
+    // What was on screen is what gets approved: a commit or a text changed while the question waited is not.
+    const fresh = sync(loadState(state.id));
+    if (approvalKey(fresh) !== shown) throw new Error('Not approved: the commit or the text changed while this question waited. Run approve again and read it once more.');
+    approve(fresh, repo);
+    Object.assign(state, fresh);
     writeBoard();
     console.log(state.kind === 'review' ? `Approved. The agent may now post this exact draft to ${repo.remote}#${state.issue}.` : `Approved. The agent may now push ${state.branch} and open the PR for ${repo.remote}.`);
   },
@@ -863,7 +893,7 @@ if (path.basename(process.argv[1] || '').replace(/\.mjs$/, '') === 'factory' && 
 const LOCKED = ['note', 'verdict', 'advance', 'block', 'unblock', 'reject', 'pr', 'archive', 'posted'];
 const [command = 'help', ...rest] = process.argv.slice(2);
 try {
-  if (!commands[command]) throw new Error(`Unknown command "${command}". Run "codeignite help" for the list.`);
+  if (!Object.hasOwn(commands, command)) throw new Error(`Unknown command "${command}". Run "codeignite help" for the list.`);
   const parsed = parseArgs(rest);
   // A command that reads a task, decides and writes it back holds the task for that time, so the board,
   // a hook or another command cannot change it in between. Long runs lock only while they record.

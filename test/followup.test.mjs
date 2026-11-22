@@ -1,6 +1,7 @@
 // Covers the loop after a pull request opens: what GitHub says about it, what the board shows, and what
 // reaches the agent only when the user sends it.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,7 +35,11 @@ write(path.join(ROOT, 'repos.json'), JSON.stringify({ defaults: {}, repos: { dem
 write(path.join(STUB, 'gh'), '#!/bin/sh\nif [ -n "$GH_FAIL" ]; then echo "could not resolve host: api.github.com" >&2; exit 1; fi\ncase "$1" in pr) cat "$GH_VIEW";; api) cat "$GH_INLINE";; *) echo "[]";; esac\n');
 fs.chmodSync(path.join(STUB, 'gh'), 0o755);
 
-const HEAD = 'a'.repeat(40);
+// A real repository on the task's branch: recording a pull request checks that the branch is the approved commit.
+const gitIn = (...args) => { const r = spawnSync('git', args, { cwd: path.join(WS, 'demo'), encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' } }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+gitIn('init', '-q', '-b', 'fix');
+gitIn('commit', '-q', '--allow-empty', '-m', 'feat: one');
+const HEAD = gitIn('rev-parse', 'HEAD');
 const URL = 'https://github.com/acme/demo/pull/9';
 function task(number, extra = {}) {
   const id = `demo-${number}`;
@@ -128,7 +133,8 @@ test('the user\'s text sends the task back to the agent, and the update answers 
   assert.equal(feedbackView(loadState(id)).needsYou, false);
   // The fix is approved and goes out: the passed-on text is answered, and what was sent is not shown as new again.
   const state = loadState(id);
-  const pushed = 'b'.repeat(40);
+  gitIn('commit', '-q', '--allow-empty', '-m', 'fix: two');
+  const pushed = gitIn('rev-parse', 'HEAD');
   Object.assign(state, { stage: 'approved', approvedSha: pushed, gatesSha: pushed });
   saveState(state);
   recordPr(loadState(id), getRepo('demo'), URL);
@@ -140,6 +146,14 @@ test('the user\'s text sends the task back to the agent, and the update answers 
   answer(view({ headRefOid: pushed, statusCheckRollup: [], reviews: [{ author: { login: 'reviewer' }, state: 'COMMENTED', body: 'One more thing.', submittedAt: new Date(Date.now() + 60_000).toISOString() }], comments: [] }), []);
   fetchFeedback(id);
   assert.deepEqual([feedbackView(loadState(id)).notes.map((n) => n.body), feedbackView(loadState(id)).needsYou], [['One more thing.'], true]);
+  // A moved branch is not what was approved, so nothing is recorded for it; neither is an address of another repository.
+  gitIn('reset', '-q', '--hard', HEAD);
+  const stale = task(40, { stage: 'approved', prUrl: null });
+  gitIn('branch', '-f', 'elsewhere', pushed);
+  assert.throws(() => recordPr(Object.assign(loadState(stale), { branch: 'elsewhere' }), getRepo('demo'), URL), /changed after it was approved: the commit, the branch or pr-body\.md is not what was approved/);
+  assert.throws(() => recordPr(loadState(stale), { ...getRepo('demo'), remote: 'acme/my.repo' }, 'https://github.com/acme/myXrepo/pull/5'), /Expected a PR URL/);
+  assert.throws(() => recordPr(loadState(stale), getRepo('demo'), 'https://github.com/acme/demo/pull/0'), /Expected a PR URL/);
+  assert.equal(recordPr(loadState(stale), getRepo('demo'), URL).stage, 'pr-opened');
 });
 
 test('the board asks GitHub on request and sends feedback only with its token', async () => {
