@@ -64,8 +64,17 @@ Stopping the board (`codeignite board --stop`) ends the sessions it started. A r
 | Account (`account`) | `login` | `login` uses the account you logged in to Claude Code with and does not pass `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` to the session, so a key in your shell is not billed by accident. `environment` passes your environment unchanged. |
 | Agents at once (`maxConcurrent`) | 2 | From 1 to 8. A further "Run agent" waits in a queue. More agents use your plan's limits faster. |
 | Sessions per run (`maxSessions`) | 12 | From 1 to 40. A brake against a run that loops. |
+| Share of the plan limit (`usageCap`) | 80 | From 0 to 100, in percent. See the brake below. 0 switches it off. |
 | Minutes per session (`sessionMinutes`) | 60 | From 1 to 480. A session that runs longer is interrupted and the run stops, so a hung session does not hold its slot. Committed work stays. |
 | Start on creation (`autoStart`) | off | A task created on the board gets an agent at once. |
+
+**The brake on plan usage.** While a session runs, Claude Code reports how much of each usage window of your plan is used: the 5-hour window and the weekly one. Codeignite keeps the last report in `cache/plan-usage.json` and works from it:
+
+- at the share you set, no new session starts: the run ends with "Agents are paused to keep the share of your plan limit you set aside", the task is listed under "Your turn", and "Run agent" refuses until the window resets;
+- ten points past the share, a running session is interrupted. Just past it, the session may finish its step first, so no work is cut off for a point or two;
+- a window whose reset time has passed no longer counts.
+
+The brake knows only what Claude Code reported. Before the first session of the day it has no figure, and a session billed by an API key reports none, so in both cases it stops nothing; Settings says what was last reported and when. It is a share of your plan, not a cost: it leaves room for your own work and does not show dollars.
 
 Permission modes:
 

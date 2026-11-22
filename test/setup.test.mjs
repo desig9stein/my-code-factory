@@ -150,7 +150,7 @@ test('update rejects a base branch that origin does not have, with the fetch hin
 });
 
 test('update rejects a field it does not edit', () => {
-  assert.throws(() => updateProject('beta', { remote: 'evil/repo' }), /"remote" cannot be changed here\. Editable fields: baseBranch, install, gates/);
+  assert.throws(() => updateProject('beta', { remote: 'evil/repo' }), /"remote" cannot be changed here\. Editable fields: baseBranch, install, setup, teardown, gates, agent\./);
 });
 
 test('update rejects a duplicate gate name', () => {

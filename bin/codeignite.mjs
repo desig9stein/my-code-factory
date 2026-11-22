@@ -16,6 +16,7 @@ import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } fro
 import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, verifyChain } from '../lib/evidence.mjs';
 import { factoryRoot, issueDir, subdirOf, workspace, worktreesDir } from '../lib/paths.mjs';
 import { buildGraph, coverage, detectLinks, reach } from '../lib/graph.mjs';
+import { freePort } from '../lib/taskenv.mjs';
 import { factoryMetrics } from '../lib/metrics.mjs';
 import { withTask } from '../lib/lock.mjs';
 import { migrate, planMigration } from '../lib/migrate.mjs';
@@ -50,6 +51,7 @@ const HELP = `Codeignite
   run <id> <gate> [--as verifier]                      Run a registry gate and record the evidence
   run <id> <step>                                      Run the check command of a step you added to the workflow
   run <id> install                                     Install dependencies in the worktree
+  run <id> setup                                       Run the project's setup command again; it runs by itself when a task is created
   run <id> reproduce --expect-fail -- <command>        Record a command that shows the bug
   run <id> extra:<label> -- <command>                  Record any other check, such as another browser
   note <id> reproduce|regress <text>                   Record a manual check where no command can
@@ -156,6 +158,20 @@ async function pairingLink(url) {
   } catch {
     return null;
   }
+}
+
+// Runs the project's setup command in a new task's folder. The task exists either way; a failure is said and recorded.
+function prepare(state, repo) {
+  if (!repo.setup) return;
+  console.log(`Setting up: ${repo.setup}`);
+  const record = runRecorded(state, { name: 'setup', kind: 'setup', cmd: repo.setup, cwd: state.worktree, timeoutMinutes: 15 });
+  if (record.ok) return console.log('Setup finished.');
+  console.log(`Setup FAILED (exit ${record.exitCode}). The task was created. Fix the cause, then run: codeignite run ${state.id} setup`);
+  withTask(state.id, () => {
+    const fresh = loadState(state.id);
+    fresh.history.push({ stage: fresh.stage, at: new Date().toISOString(), note: `Setup failed (exit ${record.exitCode}). Run "codeignite run ${state.id} setup" after fixing the cause.` });
+    saveState(fresh);
+  });
 }
 
 function openBrowser(target) {
@@ -282,6 +298,7 @@ const commands = {
       base: repo.baseBranch,
       baseSha,
       worktree,
+      port: freePort(),
       createdAt: new Date().toISOString(),
       history: [],
       blocked: null,
@@ -291,7 +308,8 @@ const commands = {
     };
     move(state, 'intake', 'Issue snapshot, branch and worktree created.');
     saveState(state);
-    console.log(`Created ${id}\n  branch   ${branch} (off origin/${repo.baseBranch} at ${baseSha.slice(0, 8)})\n  worktree ${worktree}\n  issue    ${path.join(issueDir(id), 'issue.md')}`);
+    console.log(`Created ${id}\n  branch   ${branch} (off origin/${repo.baseBranch} at ${baseSha.slice(0, 8)})\n  worktree ${worktree}\n  issue    ${path.join(issueDir(id), 'issue.md')}${state.port ? `\n  port     ${state.port}` : ''}`);
+    prepare(state, repo);
     if (repo.install) console.log(`Next: codeignite run ${id} install`);
   },
 
@@ -330,8 +348,10 @@ const commands = {
       approvedSha: null,
       prUrl: pr.url,
     };
+    state.port = freePort();
     move(state, 'intake', `PR snapshot and worktree at ${pr.headRefOid.slice(0, 8)}.`);
     saveState(state);
+    prepare(state, repo);
     writeBoard();
     console.log(`Created ${id}\n  PR       #${number} by ${state.author}: ${pr.title}\n  head     ${pr.headRefName} at ${pr.headRefOid.slice(0, 8)} (fetched ${headSha.slice(0, 8)}), base origin/${pr.baseRefName}\n  worktree ${worktree}\n  snapshot ${path.join(issueDir(id), 'pr.md')}`);
   },
@@ -389,6 +409,7 @@ const commands = {
     const actor = ['verifier', 'reviewer'].includes(args.as) ? args.as : state.kind === 'review' ? 'reviewer' : 'implementer';
     let spec;
     if (name === 'install') spec = { name, kind: 'setup', cmd: repo.install, cwd: state.worktree };
+    else if (name === 'setup') spec = { name, kind: 'setup', cmd: repo.setup, cwd: state.worktree };
     else if (name === 'reproduce') {
       if (!args.rest) throw new Error('reproduce needs the command after "--".');
       spec = { name, kind: 'run', cmd: args.rest, cwd: subdirOf(state.worktree, args.cwd), expect: args['expect-fail'] ? 'fail' : 'pass' };

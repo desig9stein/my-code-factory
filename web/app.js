@@ -134,7 +134,7 @@
     applyQueueMode(); syncHash();
   };
   // A run that ended without reaching your review leaves the task with nobody on it, until someone works on it again.
-  const STOPPED = ['error', 'stalled', 'timeout', 'limit', 'missing', 'interrupted'];
+  const STOPPED = ['error', 'stalled', 'timeout', 'limit', 'missing', 'interrupted', 'usage'];
   const agentStopped = (i) => i.run?.status === 'ended' && STOPPED.includes(i.run.reason) && lastSeen(i) <= (Date.parse(i.run.endedAt || '') || 0) + 5000;
   const needsYou = (i) => Boolean(i.blocked) || i.stage === 'ready' || i.stage === 'approved' || agentStopped(i) || Boolean(i.followup?.needsYou);
   const failingGate = (i) => i.gates.find(g => g.status === 'failed');
@@ -143,7 +143,7 @@
     if (i.blocked) return { text: i.blockedKind === 'unclear' ? 'Your turn · answer the agent' : i.blockedKind === 'attempts' ? 'Your turn · agent stopped' : 'Your turn · paused', cls: i.blockedKind === 'attempts' ? 'fd-fail' : 'fd-warning' };
     if (i.stage === 'ready') return { text: 'Your turn · review', cls: 'fd-warning' };
     if (i.stage === 'approved') return { text: i.kind === 'review' ? 'Your turn · post the review' : 'Your turn · create the PR', cls: 'fd-warning' };
-    if (agentStopped(i)) return { text: 'Your turn · agent stopped', cls: 'fd-fail' };
+    if (agentStopped(i)) return i.run.reason === 'usage' ? { text: 'Your turn · paused at your plan limit', cls: 'fd-warning' } : { text: 'Your turn · agent stopped', cls: 'fd-fail' };
     if (i.followup?.needsYou) return { text: i.followup.failed.length ? 'Your turn · pull request checks failed' : 'Your turn · pull request has feedback', cls: i.followup.failed.length ? 'fd-fail' : 'fd-warning' };
     if (i.stage === 'pr-opened' && i.followup?.state === 'merged') return { text: 'Merged · archive when ready', cls: 'fd-pass' };
     if (i.stage === 'pr-opened') return { text: i.followup?.pending ? 'Pull request open · checks running' : 'Pull request open', cls: 'fd-muted' };
@@ -232,7 +232,7 @@
     if (r?.status === 'queued') {
       return `<p class="fd-now-live"><span class="fd-idle"></span>Waiting for a free slot. At most ${number(data.agents?.maxConcurrent || 1)} agent${data.agents?.maxConcurrent === 1 ? ' runs' : 's run'} at once; change it under Settings.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Take it out of the queue</button></div>`;
     }
-    const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit', 'timeout'].includes(r.reason);
+    const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit', 'timeout', 'usage'].includes(r.reason);
     const last = r ? `<p class="${failed ? 'fd-warning' : 'fd-caption'}">The last run ended ${r.endedAt ? `${agoShort(r.endedAt)} ago` : 'without a record of when'} after ${plural(r.sessions, 'session')}: ${escape(r.detail || 'no reason was recorded.')}</p>${r.denials?.length && !/Refused commands/.test(r.detail || '') ? `<p class="fd-caption">Refused commands: ${r.denials.map(d => `<code>${escape(d)}</code>`).join(', ')}. If the agent needs one, allow it for this project under Projects, Edit.</p>` : ''}${r.limit ? `<p class="fd-warning">Your account's usage limit answered "${escape(r.limit.status)}"${r.limit.resetsAt ? `; it resets ${escape(new Date(r.limit.resetsAt).toLocaleString())}` : ''}.</p>` : ''}${r.said ? `<details class="fd-launch-more fd-keep"${kept('last-message', i.id)}><summary>The agent's last message</summary><pre class="fd-now-doc">${escape(r.said)}</pre></details>` : ''}` : '';
     const mode = data.projects.find(p => p.key === i.repo)?.agent?.permission || data.agents?.permission || '';
     return `${last}<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-run-agent>${r ? 'Run the agent again' : 'Run agent'}</button>${log}</div><p class="fd-caption fd-explain">Starts ${escape(data.agents?.label || 'your coding agent')} in the background with your own login, one fresh session per step, until the task needs you.${mode ? ` Permission mode: ${escape(data.agents?.modes?.[mode] || mode)}.` : ''} Change the mode and the limits under Settings.</p>${own('Or open a session yourself')}`;
@@ -338,7 +338,7 @@
   function renderDetails(i) {
     const part = (key, title, content, open = false) => content ? fold(key, title, `<pre>${escape(content)}</pre>`, open) : '';
     const first = !i.docs.triage && !i.docs.plan;
-    $('body').innerHTML = `${part('issue', i.kind === 'review' ? 'Pull request' : 'Issue', i.docs.issue || i.docs.pr, first)}${part('triage', 'Triage', i.docs.triage)}${part('questions', 'Open questions', i.docs.questions)}${part('plan', 'Plan', i.docs.plan)}${part('next', 'What the agent is told at this step', i.brief)}${i.reach.length && !reachProblem(i) ? fold('reach', 'Who this change reaches', reachBlock(i)) : ''}${fold('activity', 'What the agent did, step by step', i.activity ? agentActivity(i) : '<p class="fd-caption">No activity data for this task.</p>')}${fold('usage', 'Tokens and footprint', '<div id="usage-box"></div>')}${fold('where', 'Branch and folders', `<div class="fd-evidence"><div><span>Branch</span><span><code>${escape(i.branch)}</code></span></div><div><span>Base</span><span><code>${escape(i.base)}</code></span></div><div><span>Commit</span><span><code>${escape((i.head || 'worktree missing').slice(0, 12))}</code></span></div><div><span>Worktree</span><span><code>${escape(i.worktree || '')}</code></span></div></div>`)}${archiveBlock()}`;
+    $('body').innerHTML = `${part('issue', i.kind === 'review' ? 'Pull request' : 'Issue', i.docs.issue || i.docs.pr, first)}${part('triage', 'Triage', i.docs.triage)}${part('questions', 'Open questions', i.docs.questions)}${part('plan', 'Plan', i.docs.plan)}${part('next', 'What the agent is told at this step', i.brief)}${i.reach.length && !reachProblem(i) ? fold('reach', 'Who this change reaches', reachBlock(i)) : ''}${fold('activity', 'What the agent did, step by step', i.activity ? agentActivity(i) : '<p class="fd-caption">No activity data for this task.</p>')}${fold('usage', 'Tokens and footprint', '<div id="usage-box"></div>')}${fold('where', 'Branch and folders', `<div class="fd-evidence"><div><span>Branch</span><span><code>${escape(i.branch)}</code></span></div><div><span>Base</span><span><code>${escape(i.base)}</code></span></div><div><span>Commit</span><span><code>${escape((i.head || 'worktree missing').slice(0, 12))}</code></span></div><div><span>Worktree</span><span><code>${escape(i.worktree || '')}</code></span></div>${i.port ? `<div><span>Port reserved for this task</span><span><code>${escape(i.port)}</code></span></div>` : ''}</div>`)}${archiveBlock()}`;
     renderUsage(i);
   }
   const checksTable = (i) => `<div class="fd-evidence">${i.gates.map(g => `<div><span>${escape(g.name)}</span><span>${check(g.status)}${g.verifier ? ` · verifier ${check(g.verifier)}` : ''}</span></div>`).join('') || '<p>No gates configured for this project.</p>'}${i.regress ? `<div><span>Regression proof</span><span>${check(i.regress)}</span></div>` : ''}${i.kind === 'review' ? '' : `<div><span>Verifier verdict</span><span>${i.verdict ? check(i.verdict) : '<span class="fd-muted">not recorded</span>'}</span></div>`}</div>`;
@@ -438,6 +438,15 @@
     return `<article class="fd-card ${kind}"><header><h3>${escape(p.key)}</h3><span class="fd-badge" title="Base branch">${escape(p.baseBranch)}</span></header><div><p class="fd-card-remote">${externalLink(`https://github.com/${p.remote}`, p.remote)}</p>${gates}${p.install ? `<p class="fd-card-install"><span>install</span><code title="${escape(p.install)}">${escape(p.install)}</code></p>` : ''}</div>${footer ? `<footer>${footer}</footer>` : ''}</article>`;
   }
   // The machine's settings for agents the board starts: what they may do, how many run, which login they use.
+  // Says what Claude Code last reported about the plan's usage windows, which is what the brake works from.
+  function planLine(usage, cap) {
+    const names = { five_hour: '5-hour window', seven_day: 'weekly window' };
+    if (!cap) return '<p class="fd-caption">The brake is off: agents run until your plan\'s limit stops them.</p>';
+    if (!usage?.windows?.length) return '<p class="fd-caption">Plan usage: not reported yet. Claude Code reports it while an agent runs; until then the brake cannot stop anything.</p>';
+    const now = Date.now() / 1000;
+    const parts = usage.windows.map(w => { const stale = w.resetsAt && w.resetsAt < now, pct = Math.round(w.used * 100); return `<span class="${!stale && pct >= cap ? 'fd-warning' : ''}">${escape(names[w.id] || w.id)} ${stale ? 'has reset since' : `${pct}%`}</span>`; });
+    return `<p class="fd-caption">Plan usage, as Claude Code reported it ${agoShort(usage.at)} ago: ${parts.join(' · ')}. Agents pause at ${escape(cap)}%.</p>`;
+  }
   function agentsSection() {
     if (!served) return '';
     if (!agentsInfo) return '<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption">Loading…</p>';
@@ -445,8 +454,8 @@
     const options = (list, value) => list.map(o => `<option value="${escape(o.id)}"${o.id === value ? ' selected' : ''}>${escape(o.label)}</option>`).join('');
     const explain = (list) => `<dl class="fd-agent-modes">${list.map(o => `<dt>${escape(o.label)}</dt><dd>${escape(o.about)}</dd>`).join('')}</dl>`;
     return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption fd-explain">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. ${h.version ? `Found: ${escape(h.version)}.` : ''} These settings stay on this machine and are not part of the team export.</p>${h.version ? '' : `<p class="fd-warning">${escape(h.label)} was not found on this machine, so "Run agent" cannot start a session. ${escape(h.install)}</p>`}
-<form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label>Minutes per session, at most<input name="sessionMinutes" type="number" required min="${limits.sessionMinutes[0]}" max="${limits.sessionMinutes[1]}" value="${s.sessionMinutes}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
-<details class="fd-launch-more fd-keep"${kept('agent-choices', 'settings')}><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption fd-explain">A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
+<form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label>Minutes per session, at most<input name="sessionMinutes" type="number" required min="${limits.sessionMinutes[0]}" max="${limits.sessionMinutes[1]}" value="${s.sessionMinutes}"></label><label>Pause agents at this share of my plan limit, in %<input name="usageCap" type="number" required min="${limits.usageCap[0]}" max="${limits.usageCap[1]}" value="${s.usageCap}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
+${planLine(agentsInfo.planUsage, s.usageCap)}<details class="fd-launch-more fd-keep"${kept('agent-choices', 'settings')}><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption fd-explain">The share of your plan limit is a brake: at that share no new agent session starts, and ten points past it a running session is interrupted. 0 switches it off. It works from the usage Claude Code reports during a session, so it knows nothing before the first run of the day. A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
   }
   function renderProjectCards() {
     const match = p => `${p.key} ${p.remote}`.toLowerCase().includes(projectQuery.toLowerCase());
@@ -477,7 +486,7 @@
     const f = e.target.elements;
     $('agents-error').textContent = '';
     try {
-      const saved = await post('/api/agents/settings', { permission: f.permission.value, account: f.account.value, maxConcurrent: Number(f.maxConcurrent.value), maxSessions: Number(f.maxSessions.value), sessionMinutes: Number(f.sessionMinutes.value), autoStart: f.autoStart.checked });
+      const saved = await post('/api/agents/settings', { permission: f.permission.value, account: f.account.value, maxConcurrent: Number(f.maxConcurrent.value), maxSessions: Number(f.maxSessions.value), sessionMinutes: Number(f.sessionMinutes.value), usageCap: Number(f.usageCap.value), autoStart: f.autoStart.checked });
       agentsInfo.settings = saved.settings;
       delete e.target.dataset.dirty;
       notice('Agent settings saved. They apply to the next run.');
@@ -531,12 +540,14 @@
   });
   const gateRow = (g = {}) => `<div class="fd-gate" data-cwd="${escape(g.cwd || '')}"><label>Name<input data-gate="name" required value="${escape(g.name || '')}" placeholder="verify"></label><label>Command<input data-gate="cmd" required value="${escape(g.cmd || '')}" placeholder="npm run verify"></label><button type="button" class="fd-btn" data-drop-gate>Remove</button></div>`;
   function openProject(mode, p) {
-    editing = { mode, key: p.key, dir: p.dir, baseBranch: p.baseBranch, install: p.install || '' };
+    editing = { mode, key: p.key, dir: p.dir, baseBranch: p.baseBranch, install: p.install || '', setup: p.setup || '', teardown: p.teardown || '' };
     const form = $('project-form');
     $('project-title').textContent = mode === 'edit' ? `Edit ${p.key}` : `Register ${p.key}`;
     $('project-dir').textContent = p.shared ? `${p.dir} · filled in from your team's shared setup for this repository` : p.dir;
     form.elements.key.value = p.key; form.elements.key.readOnly = mode === 'edit';
     form.elements.baseBranch.value = p.baseBranch; form.elements.install.value = p.install || '';
+    form.elements.setup.value = p.setup || ''; form.elements.teardown.value = p.teardown || '';
+    $('project-task-commands').hidden = mode !== 'edit';
     $('project-gates').innerHTML = p.gates.map(gateRow).join('');
     // A project's own agent settings exist once it is registered.
     $('project-agent').hidden = mode !== 'edit' || !agentsInfo;
@@ -557,7 +568,7 @@
     const gates = [...$('project-gates').querySelectorAll('.fd-gate')].map(row => ({ name: row.querySelector('[data-gate=name]').value.trim(), cmd: row.querySelector('[data-gate=cmd]').value.trim(), ...(row.dataset.cwd ? { cwd: row.dataset.cwd } : {}) }));
     $('save-project').disabled = true;
     try {
-      if (editing.mode === 'edit') await post('/api/project/update', { key: editing.key, gates, ...(base !== editing.baseBranch ? { baseBranch: base } : {}), ...(install !== editing.install ? { install } : {}), ...(!$('project-agent').hidden && JSON.stringify(agentOf(form)) !== editing.agent ? { agent: agentOf(form) } : {}) });
+      if (editing.mode === 'edit') await post('/api/project/update', { key: editing.key, gates, ...(base !== editing.baseBranch ? { baseBranch: base } : {}), ...(install !== editing.install ? { install } : {}), ...(form.elements.setup.value.trim() !== editing.setup ? { setup: form.elements.setup.value.trim() } : {}), ...(form.elements.teardown.value.trim() !== editing.teardown ? { teardown: form.elements.teardown.value.trim() } : {}), ...(!$('project-agent').hidden && JSON.stringify(agentOf(form)) !== editing.agent ? { agent: agentOf(form) } : {}) });
       else await post('/api/project/add', { key: form.elements.key.value.trim(), dir: editing.dir, baseBranch: base, install, gates });
       notice(`${form.elements.key.value.trim()}: ${editing.mode === 'edit' ? 'saved' : 'registered'}.`);
       $('project-dialog').close(); gh = null; refresh(); loadSetup();
