@@ -10,8 +10,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'factory-portable-'));
 const root = path.join(tmp, 'private data');
 const ws = path.join(tmp, 'projects with spaces');
 fs.mkdirSync(ws);
-const bin = fileURLToPath(new URL('../bin/factory.mjs', import.meta.url));
-const env = { ...process.env, FACTORY_ROOT: root, FACTORY_WORKSPACE: '', GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' };
+const bin = fileURLToPath(new URL('../bin/codeignite.mjs', import.meta.url));
+const env = { ...process.env, CODEIGNITE_ROOT: root, CODEIGNITE_WORKSPACE: '', GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' };
 const cli = (...args) => spawnSync(process.execPath, [bin, ...args], { env, encoding: 'utf8' });
 const git = (...args) => { const r = spawnSync('git', args, { cwd: ws, env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -42,7 +42,7 @@ test('state identifiers cannot traverse outside runtime storage', async () => {
 
 test('generated hook commands preserve paths containing spaces and shell metacharacters', () => {
   const oddRoot = path.join(tmp, "user's $(not-a-command) data");
-  const oddEnv = { ...env, FACTORY_ROOT: oddRoot };
+  const oddEnv = { ...env, CODEIGNITE_ROOT: oddRoot };
   const init = spawnSync(process.execPath, [bin, 'init', '--workspace', ws], { env: oddEnv, encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);
   const result = spawnSync(process.execPath, [bin, 'hooks'], { env: oddEnv, encoding: 'utf8' });
@@ -99,13 +99,13 @@ test('the project graph orders what a change reaches, reports bad links and sugg
   assert.equal(junk.problems.filter((p) => /cannot depend on itself/.test(p)).length, 1);
   // Manifests: react lists a package that wc publishes from a nested folder.
   const write = (file, json) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(json)); };
-  process.env.FACTORY_WORKSPACE = ws;
+  process.env.CODEIGNITE_WORKSPACE = ws;
   try {
     write(path.join(ws, 'g/wc/packages/core/package.json'), { name: '@acme/wc', version: '5.2.0' });
     write(path.join(ws, 'g/react/package.json'), { name: '@acme/react', peerDependencies: { '@acme/wc': '^5.1.0' }, dependencies: { lodash: '^4' } });
     assert.deepEqual(detectLinks({ repos }), [{ from: 'react', to: 'wc', package: '@acme/wc', range: '^5.1.0', version: '5.2.0' }]);
   } finally {
-    delete process.env.FACTORY_WORKSPACE;
+    delete process.env.CODEIGNITE_WORKSPACE;
   }
 });
 

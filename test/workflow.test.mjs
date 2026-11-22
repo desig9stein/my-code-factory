@@ -7,7 +7,7 @@ import path from 'node:path';
 import { after, before, beforeEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const BIN = fileURLToPath(new URL('../bin/factory.mjs', import.meta.url));
+const BIN = fileURLToPath(new URL('../bin/codeignite.mjs', import.meta.url));
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'factory-workflow-')));
 const ROOT = path.join(tmp, 'data');
 const WS = path.join(tmp, 'ws');
@@ -16,8 +16,8 @@ const ID = 'app-5';
 const DIR = path.join(ROOT, 'issues', ID);
 
 Object.assign(process.env, {
-  FACTORY_ROOT: ROOT,
-  FACTORY_WORKSPACE: WS,
+  CODEIGNITE_ROOT: ROOT,
+  CODEIGNITE_WORKSPACE: WS,
   CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'),
   GIT_AUTHOR_NAME: 'Test',
   GIT_AUTHOR_EMAIL: 'test@example.com',
@@ -99,7 +99,7 @@ test('without a saved workflow the defaults hold: four types, six plan sections,
   assert.deepEqual(w.lessons, []);
   assert.deepEqual(w.stages.reproduce.skipFor, ['feature', 'docs', 'chore']);
   assert.deepEqual(w.stages.gates.requireRegression, ['bug']);
-  assert.deepEqual(w.stages.verify.use, [{ ref: 'factory-verifier', kind: 'agent' }]);
+  assert.deepEqual(w.stages.verify.use, [{ ref: 'codeignite-verifier', kind: 'agent' }]);
   assert.equal(fs.existsSync(path.join(ROOT, 'workflow.json')), false);
 });
 
@@ -283,20 +283,20 @@ test('the brief names a path reference as a file to read, and only the entries f
   assert.doesNotMatch(feature, /bug-fixing/);
 });
 
-test('factory next prints the instructions, the verifier agent and what is still missing', () => {
+test('codeignite next prints the instructions, the verifier agent and what is still missing', () => {
   saveWorkflow('app', { stages: { triage: { instructions: 'Triage {id} into {dir}/triage.md as {types}.' } } });
   at('triage', undefined);
   const triage = cli('next', ID);
   assert.equal(triage.status, 0, triage.out);
   assert.match(triage.out, new RegExp(`Triage app-5 into ${DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/triage\\.md as bug\\|feature\\|docs\\|chore\\.`));
   assert.match(triage.out, /Still missing:\n {2}- triage\.md is missing/);
-  assert.match(triage.out, /Then run: factory advance app-5/);
+  assert.match(triage.out, /Then run: codeignite advance app-5/);
   at('verify', 'feature');
   const verify = cli('next', ID);
-  assert.match(verify.out, /Delegate to the agent "factory-verifier"/);
+  assert.match(verify.out, /Delegate to the agent "codeignite-verifier"/);
   assert.match(verify.out, /Done when: .*the verifier recorded a passing verdict at HEAD after re-running every gate/);
   assert.equal(loadState(ID).stage, 'verify');
-  assert.match(cli('status', ID).out, /Next step: factory next app-5/);
+  assert.match(cli('status', ID).out, /Next step: codeignite next app-5/);
 });
 
 test('a blocked task tells the agent to stop', () => {
@@ -315,21 +315,21 @@ test('doctor and the brief report a saved reference whose file is gone', () => {
   assert.match(brief, /MISSING: \.github\/agents\/gone\.md \(configured agent/);
 });
 
-test('hooks install writes the factory skill and the verifier agent, and is a no-op the second time', () => {
+test('hooks install writes the Codeignite skill and the verifier agent, and is a no-op the second time', () => {
   const dir = path.join(tmp, 'claude');
   const first = cli('hooks', '--install');
   assert.equal(first.status, 0, first.out);
-  const skillFile = path.join(dir, 'skills', 'factory', 'SKILL.md');
-  const agentFile = path.join(dir, 'agents', 'factory-verifier.md');
-  assert.match(fs.readFileSync(skillFile, 'utf8'), /^---\nname: factory\n/);
-  assert.match(fs.readFileSync(skillFile, 'utf8'), /bin\/factory\.mjs'`/);
-  assert.match(fs.readFileSync(agentFile, 'utf8'), /^---\nname: factory-verifier\n/);
+  const skillFile = path.join(dir, 'skills', 'codeignite', 'SKILL.md');
+  const agentFile = path.join(dir, 'agents', 'codeignite-verifier.md');
+  assert.match(fs.readFileSync(skillFile, 'utf8'), /^---\nname: codeignite\n/);
+  assert.match(fs.readFileSync(skillFile, 'utf8'), /bin\/codeignite\.mjs'`/);
+  assert.match(fs.readFileSync(agentFile, 'utf8'), /^---\nname: codeignite-verifier\n/);
   write(agentFile, 'edited by hand');
   const second = cli('hooks', '--install');
   assert.match(second.out, /SKILL\.md is already current/);
-  assert.match(second.out, /factory-verifier\.md\. Previous version: .*factory-verifier\.md\.bak/);
+  assert.match(second.out, /codeignite-verifier\.md\. Previous version: .*codeignite-verifier\.md\.bak/);
   assert.equal(fs.readFileSync(`${agentFile}.bak`, 'utf8'), 'edited by hand');
-  assert.match(cli('hooks', '--install').out, /factory-verifier\.md is already current/);
+  assert.match(cli('hooks', '--install').out, /codeignite-verifier\.md is already current/);
 });
 
 const { workflowShape } = await import('../lib/workflow.mjs');
@@ -380,7 +380,7 @@ test('an added step with a command check needs a passing run of that command at 
   saveWorkflow('app', { customStages: [{ id: 'a11y', title: 'Accessibility', about: '', after: 'gates', check: { kind: 'command', cmd: 'true' } }] });
   assert.deepEqual(resolveWorkflow('app').order.slice(5, 8), ['gates', 'a11y', 'verify']);
   at('a11y', 'feature');
-  assert.match(step().problems[0], /The check of step "a11y" has not run\. Run "factory run app-5 a11y"/);
+  assert.match(step().problems[0], /The check of step "a11y" has not run\. Run "codeignite run app-5 a11y"/);
   const run = cli('run', ID, 'a11y');
   assert.equal(run.status, 0, run.out);
   assert.equal(step().moved, true);
@@ -404,12 +404,12 @@ test('a task in a step that was deleted continues after the last stage that stil
   assert.equal(loadState(ID).history.at(-1).note, 'Skipped: design-review was removed from the workflow.');
 });
 
-test('an added step is rejected when it reuses a factory name, sits after the human review, or exceeds the limit', () => {
+test('an added step is rejected when it reuses a Codeignite name, sits after the human review, or exceeds the limit', () => {
   const add = (step) => () => saveWorkflow('global', { customStages: [{ ...design, ...step }] });
-  assert.throws(add({ id: 'gates' }), /Step id "gates" is already used by the factory/);
+  assert.throws(add({ id: 'gates' }), /Step id "gates" is already used by Codeignite/);
   assert.throws(add({ id: 'Design Review' }), /is not valid\. Use 2 to 24 lowercase letters/);
   assert.throws(add({ after: 'ready' }), /cannot go after "ready"\. A step goes after one of: triage, reproduce, plan, implement, gates, verify\. Steps after the human review are fixed/);
-  assert.throws(add({ check: { kind: 'document', file: 'verify.md' } }), /verify\.md are written by the factory/);
+  assert.throws(add({ check: { kind: 'document', file: 'verify.md' } }), /verify\.md are written by Codeignite/);
   assert.throws(add({ check: { kind: 'command', cmd: 'a\nb' } }), /needs a check command: one line/);
   assert.throws(() => saveWorkflow('global', { customStages: Array.from({ length: 7 }, (_, n) => ({ ...design, id: `step-${n}` })) }), /at most 6 steps/);
   assert.throws(() => saveWorkflow('global', { stages: { 'design-review': { instructions: 'x' } } }), /"design-review" is not a stage of the issue workflow/);
@@ -544,7 +544,7 @@ test('the default instructions ask for a failing signal first, test-first work a
   assert.match(w.stages.verify.instructions, /judges two things separately: standards .* and intent/);
   assert.match(w.stages.verify.instructions, /the evidence \(output or a test run before and after\), and the merge risk/);
   cli('hooks', '--install');
-  assert.match(fs.readFileSync(path.join(tmp, 'claude', 'agents', 'factory-verifier.md'), 'utf8'), /- Standards: .*\n {3}- Intent: /);
+  assert.match(fs.readFileSync(path.join(tmp, 'claude', 'agents', 'codeignite-verifier.md'), 'utf8'), /- Standards: .*\n {3}- Intent: /);
 });
 
 test('a glossary in the repository is suggested as a file to read first', () => {
@@ -576,7 +576,7 @@ test('installed recommended skills are suggested for their steps and applied to 
   acceptProposals('global', [proposals[1].id, proposals[2].id]);
   const w = resolveWorkflow('app');
   assert.deepEqual(w.stages.implement.use, [{ ref: 'mattpocock-skills:tdd', kind: 'skill' }]);
-  assert.deepEqual(w.stages.verify.use, [{ ref: 'factory-verifier', kind: 'agent' }, { ref: 'mattpocock-skills:code-review', kind: 'skill' }]);
+  assert.deepEqual(w.stages.verify.use, [{ ref: 'codeignite-verifier', kind: 'agent' }, { ref: 'mattpocock-skills:code-review', kind: 'skill' }]);
   dismissProposals('global', [proposals[0].id]);
   assert.deepEqual(proposeGlobal().proposals.map((p) => p.stage), ['draft']);
 });
@@ -668,7 +668,7 @@ test('activity inside the worktree is told apart from a call that only names the
   const { recordActivity, activitySummary } = await import('../lib/activity.mjs');
   const state = at('implement', 'feature');
   fs.rmSync(path.join(DIR, 'activity.jsonl'), { force: true });
-  recordActivity([state], { tool_name: 'Bash', tool_input: { command: `factory status ${ID}` }, cwd: tmp });
+  recordActivity([state], { tool_name: 'Bash', tool_input: { command: `codeignite status ${ID}` }, cwd: tmp });
   assert.equal(activitySummary(state).lastInside, null);
   assert.equal(activitySummary(state).last.label, 'Bash');
   recordActivity([state], { tool_name: 'Edit', tool_input: { file_path: 'a.txt' }, cwd: APP });

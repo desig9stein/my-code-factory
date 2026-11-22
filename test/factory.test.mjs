@@ -8,7 +8,7 @@ import path from 'node:path';
 import { before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/factory.mjs');
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/codeignite.mjs');
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'factory-test-')));
 const WORKSPACE = path.join(tmp, 'ws');
 const ROOT = path.join(WORKSPACE, 'factory');
@@ -18,12 +18,12 @@ const WT = path.join(ROOT, 'worktrees', ID);
 const ISSUE = path.join(ROOT, 'issues', ID);
 
 // A board port exported in the developer's shell must not change what the tests expect.
-delete process.env.FACTORY_PORT;
+delete process.env.CODEIGNITE_PORT;
 // Lets nested "node --test" runs report their own exit code.
 delete process.env.NODE_TEST_CONTEXT;
 Object.assign(process.env, {
-  FACTORY_ROOT: ROOT,
-  FACTORY_WORKSPACE: WORKSPACE,
+  CODEIGNITE_ROOT: ROOT,
+  CODEIGNITE_WORKSPACE: WORKSPACE,
   GIT_AUTHOR_NAME: 'Test',
   GIT_AUTHOR_EMAIL: 'test@example.com',
   GIT_COMMITTER_NAME: 'Test',
@@ -99,24 +99,24 @@ test('new creates the branch off the base with no upstream', () => {
   assert.equal(loadState(ID).stage, 'intake');
 });
 
-test('a push on the factory branch is refused before approval', () => {
+test('a push on the Codeignite branch is refused before approval', () => {
   assert.equal(bash('git push -u origin HEAD', WT).deny, true);
   assert.equal(bash(`cd ${WT} && git push`).deny, true);
   assert.equal(bash('gh pr create --head me/fix-7-add-returns-the-difference').deny, true);
   assert.equal(bash('gh issue comment 7 -R acme/demo --body hi').deny, true);
 });
 
-test('a push on a branch the factory does not own is allowed', () => {
+test('a push on a branch Codeignite does not own is allowed', () => {
   assert.equal(bash('git push origin main', REPO).deny, false);
   assert.equal(bash('gh issue comment 8 -R acme/demo --body hi').deny, false);
 });
 
 test('an agent cannot approve or write state and evidence', () => {
-  assert.equal(bash(`node factory/bin/factory.mjs approve ${ID}`).deny, true);
+  assert.equal(bash(`node factory/bin/codeignite.mjs approve ${ID}`).deny, true);
   assert.equal(bash(`echo '{}' > factory/issues/${ID}/state.json`).deny, true);
   assert.equal(bash(`cat factory/issues/${ID}/state.json 2>/dev/null`).deny, false);
   // The same actions written another way: a quoted word, a file named from inside its folder, the GitHub API.
-  assert.equal(bash(`node factory/bin/factory.mjs "approve" ${ID}`).deny, true);
+  assert.equal(bash(`node factory/bin/codeignite.mjs "approve" ${ID}`).deny, true);
   assert.equal(bash(`cd factory/issues/${ID} && echo '{}' > state.json`).deny, true);
   assert.equal(bash(`cd factory/issues/${ID} && rm -rf evidence`).deny, true);
   assert.equal(bash(`cd factory/issues/${ID} && cat state.json && echo done > notes.md`).deny, true);
@@ -134,7 +134,7 @@ test('an agent cannot approve or write state and evidence', () => {
   assert.equal(edit(path.join(ISSUE, 'plan.md')).deny, false);
 });
 
-test('an MCP push naming the factory branch is refused', () => {
+test('an MCP push naming the Codeignite branch is refused', () => {
   const d = decide({ tool_name: 'mcp__GitKraken__git_push', tool_input: { branch: 'me/fix-7-add-returns-the-difference' }, cwd: WORKSPACE });
   assert.equal(d.deny, true);
 });
@@ -480,22 +480,22 @@ test('board writes the page and a data file with every issue', () => {
   fs.utimesSync(data, new Date(0), new Date(0));
   assert.equal(hook('ls -la').status, 0);
   assert.equal(fs.statSync(data).mtimeMs, 0);
-  assert.equal(hook(`factory status ${ID}`).status, 0);
+  assert.equal(hook(`codeignite status ${ID}`).status, 0);
   assert.notEqual(fs.statSync(data).mtimeMs, 0);
   // A second task call right after does not rebuild it again: the rewrite is limited to twice a minute.
   const fresh = fs.statSync(data).mtimeMs;
-  assert.equal(hook(`factory status ${ID}`).status, 0);
+  assert.equal(hook(`codeignite status ${ID}`).status, 0);
   assert.equal(fs.statSync(data).mtimeMs, fresh);
 });
 
 test('tokens count the calls that acted on the issue once each, plus its subagents', async () => {
   const { issueTokens, linkSession } = await import('../lib/tokens.mjs');
   const transcript = path.join(tmp, 'sess.jsonl');
-  const row = (id, timestamp, output, command = `factory run ${ID} lint`) =>
+  const row = (id, timestamp, output, command = `codeignite run ${ID} lint`) =>
     JSON.stringify({ type: 'assistant', timestamp, message: { id, content: [{ type: 'tool_use', input: { command } }], usage: { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000, output_tokens: output } } });
   const later = new Date(Date.now() + 60_000).toISOString();
   write(transcript, [row('m0', '2000-01-01T00:00:00.000Z', 999), row('m1', later, 5), row('m1', later, 5), row('m2', later, 7), row('m3', later, 500, 'npm test in another repo'), '{"type":"user","usage":1}'].join('\n'));
-  write(path.join(tmp, 'sess/subagents/agent-a.jsonl'), [JSON.stringify({ type: 'user', message: { content: `Verify factory issue ${ID}.` } }), row('s1', later, 3, 'ls')].join('\n'));
+  write(path.join(tmp, 'sess/subagents/agent-a.jsonl'), [JSON.stringify({ type: 'user', message: { content: `Verify Codeignite issue ${ID}.` } }), row('s1', later, 3, 'ls')].join('\n'));
   write(path.join(tmp, 'sess/subagents/agent-b.jsonl'), [JSON.stringify({ type: 'user', message: { content: 'Explore something else.' } }), row('s2', later, 800, 'ls')].join('\n'));
   assert.equal(issueTokens(loadState(ID), { force: true }).sessions, 0);
   linkSession(ID, transcript);

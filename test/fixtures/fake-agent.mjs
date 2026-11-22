@@ -34,7 +34,7 @@ if (mode === 'hang' || mode === 'tree') {
   setInterval(() => {}, 1000);
 } else {
   if (mode === 'advance') {
-    const file = path.join(process.env.FACTORY_ROOT, 'issues', id, 'state.json');
+    const file = path.join(process.env.CODEIGNITE_ROOT, 'issues', id, 'state.json');
     const state = JSON.parse(fs.readFileSync(file, 'utf8'));
     state.stage = NEXT[state.stage] || state.stage;
     fs.writeFileSync(file, JSON.stringify(state));

@@ -12,7 +12,7 @@ Any developer who supervises AI coding agents working on GitHub issues and pull 
 
 ## Product Purpose
 
-Codeignite takes a GitHub issue or pull request through implementation, recorded checks, independent verification and human approval. The `factory` CLI runs the pipeline and the board at `http://127.0.0.1:4317` shows it. Success is a change that reaches human approval with its evidence attached, and a developer who can tell in one look whose turn it is.
+Codeignite takes a GitHub issue or pull request through implementation, recorded checks, independent verification and human approval. The `codeignite` CLI runs the pipeline and the board at `http://127.0.0.1:4317` shows it. Success is a change that reaches human approval with its evidence attached, and a developer who can tell in one look whose turn it is.
 
 ## Positioning
 
@@ -20,7 +20,7 @@ A repeatable pipeline. Every task goes through the same stages, gates and brakes
 
 ## Operating Context
 
-- Runs locally. The server listens on `127.0.0.1`, and project data lives in `~/.code-factory`, outside this repository.
+- Runs locally. The server listens on `127.0.0.1`, and project data lives in `~/.codeignite`, outside this repository.
 - Works on Git worktrees and through the GitHub CLI (`gh`). Requires Node.js 22 or newer. macOS and Linux are the targets; Windows is not validated.
 - Any coding harness can use the CLI. Transcript attribution, guard hooks and running an agent from the board are built for Claude Code, behind an adapter that other agents can implement.
 - The board updates when task data changes and keeps open forms and explanations until the user finishes interacting.

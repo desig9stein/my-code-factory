@@ -12,8 +12,8 @@ const WS = path.join(tmp, 'ws');
 const STUB = path.join(tmp, 'stub');
 const VIEW = path.join(tmp, 'view.json');
 const INLINE = path.join(tmp, 'inline.json');
-delete process.env.FACTORY_PORT;
-Object.assign(process.env, { FACTORY_ROOT: ROOT, FACTORY_WORKSPACE: WS, PATH: `${STUB}${path.delimiter}${process.env.PATH}`, CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'), GH_VIEW: VIEW, GH_INLINE: INLINE });
+delete process.env.CODEIGNITE_PORT;
+Object.assign(process.env, { CODEIGNITE_ROOT: ROOT, CODEIGNITE_WORKSPACE: WS, PATH: `${STUB}${path.delimiter}${process.env.PATH}`, CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'), GH_VIEW: VIEW, GH_INLINE: INLINE });
 
 const { feedbackView, fetchFeedback, readFeedback, sendFeedback } = await import('../lib/followup.mjs');
 const { loadState, saveState } = await import('../lib/state.mjs');

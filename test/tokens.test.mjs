@@ -4,11 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, after } from 'node:test';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'factory-usage-'));
-process.env.FACTORY_ROOT = root;
+process.env.CODEIGNITE_ROOT = root;
 const { linkSession, issueTokens } = await import('../lib/tokens.mjs');
 const state = { id: 'app-42', createdAt: '2026-01-01T00:00:00.000Z', history: [] };
 fs.mkdirSync(path.join(root, 'issues', state.id), { recursive: true });
-const row = (id, output) => JSON.stringify({ type: 'assistant', timestamp: '2026-02-01T00:00:00.000Z', message: { id, content: [{ type: 'tool_use', input: { command: 'factory status app-42' } }], usage: { input_tokens: 10, output_tokens: output, cache_creation_input_tokens: 20, cache_read_input_tokens: 100 } } });
+const row = (id, output) => JSON.stringify({ type: 'assistant', timestamp: '2026-02-01T00:00:00.000Z', message: { id, content: [{ type: 'tool_use', input: { command: 'codeignite status app-42' } }], usage: { input_tokens: 10, output_tokens: output, cache_creation_input_tokens: 20, cache_read_input_tokens: 100 } } });
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 test('session subtotals reconcile, missing transcripts are partial rather than zero', () => {
   assert.equal(issueTokens(state).availability, 'unavailable');
@@ -37,7 +37,7 @@ test('a call naming app-42 is not attributed to app-4 or to my-app-42', async ()
     assert.equal(issueTokens({ id, createdAt: state.createdAt, history: [] }, { force: true }).availability, 'unavailable');
   }
   assert.equal(namesId('cd /data/worktrees/app-42/src', 'app-42'), true);
-  assert.equal(namesId('"factory status app-42"', 'app-42'), true);
+  assert.equal(namesId('"codeignite status app-42"', 'app-42'), true);
   assert.equal(namesId('my-app-42', 'app-42'), false);
   assert.equal(namesId('axb-1', 'a.b-1'), false);
 });
@@ -52,7 +52,7 @@ test('hooks record tool, skill, agent and MCP use per stage without keeping argu
   assert.deepEqual(describeCall({ tool_name: 'Bash', tool_input: { command: 'TOKEN=secret /usr/bin/npm test -- --grep "private thing"' } }), { kind: 'tool', label: 'Bash', detail: 'npm' });
   assert.deepEqual(describeCall({ tool_name: 'mcp__github__issue_read', tool_input: { q: 'x' } }), { kind: 'mcp', label: 'github', detail: 'issue_read' });
   assert.deepEqual(describeCall({ tool_name: 'Skill', tool_input: { skill: 'factory' } }), { kind: 'skill', label: 'factory', detail: '' });
-  assert.equal(describeCall({ tool_name: 'Agent', tool_input: { subagent_type: 'factory-verifier', prompt: 'p' } }).label, 'factory-verifier');
+  assert.equal(describeCall({ tool_name: 'Agent', tool_input: { subagent_type: 'codeignite-verifier', prompt: 'p' } }).label, 'codeignite-verifier');
   // A call inside the worktree counts without naming the task; a sibling id does not match.
   const inside = { cwd: path.join(worktree, 'src'), tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: 'TOKEN=secret npm test' } };
   assert.deepEqual(tasksOf([task, other], inside).map((s) => s.id), [id]);

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const BIN = fileURLToPath(new URL('../bin/factory.mjs', import.meta.url));
+const BIN = fileURLToPath(new URL('../bin/codeignite.mjs', import.meta.url));
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'factory-setup-')));
 const ROOT = path.join(tmp, 'data');
 const WS = path.join(tmp, 'ws');
@@ -16,8 +16,8 @@ const GH_LOG = path.join(tmp, 'gh-args.json');
 const GH_OUT = path.join(tmp, 'gh-out.json');
 
 Object.assign(process.env, {
-  FACTORY_ROOT: ROOT,
-  FACTORY_WORKSPACE: '',
+  CODEIGNITE_ROOT: ROOT,
+  CODEIGNITE_WORKSPACE: '',
   CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'),
   PATH: `${STUB}${path.delimiter}${process.env.PATH}`,
   GH_LOG,
@@ -259,7 +259,7 @@ test('the board starts a task itself, and the task carries a prompt and a folder
   const task = JSON.parse(data.slice(data.indexOf('(') + 1, data.lastIndexOf(')'))).issues.find((i) => i.id === 'gamma-2');
   assert.equal(task.stage, 'intake');
   assert.equal(task.worktree, path.join(ROOT, 'worktrees', 'gamma-2'));
-  assert.match(task.prompt, /^Work on the Codeignite task gamma-2 with the factory skill\. Start by running: node '.*bin\/factory\.mjs' next gamma-2$/);
+  assert.match(task.prompt, /^Work on the Codeignite task gamma-2 with the Codeignite skill\. Start by running: node '.*bin\/codeignite\.mjs' next gamma-2$/);
   assert.match((await (await start({ project: 'gamma', number: 2, kind: 'new' })).json()).error, /gamma-2 already exists at stage "intake"/);
 });
 

@@ -7,15 +7,15 @@ import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const BIN = fileURLToPath(new URL('../bin/factory.mjs', import.meta.url));
+const BIN = fileURLToPath(new URL('../bin/codeignite.mjs', import.meta.url));
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'factory-share-')));
 const ROOT = path.join(tmp, 'data');
 const WS = path.join(tmp, 'ws');
-const FILE = path.join(tmp, 'factory.config.json');
+const FILE = path.join(tmp, 'codeignite.config.json');
 
 Object.assign(process.env, {
-  FACTORY_ROOT: ROOT,
-  FACTORY_WORKSPACE: '',
+  CODEIGNITE_ROOT: ROOT,
+  CODEIGNITE_WORKSPACE: '',
   CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'),
   GIT_AUTHOR_NAME: 'Test',
   GIT_AUTHOR_EMAIL: 'test@example.com',
@@ -37,7 +37,7 @@ function sh(cwd, cmd) {
 }
 // Runs the CLI against a data folder and workspace of its own, like a teammate's machine.
 const cliAt = (root, ...args) => {
-  const r = spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', cwd: tmp, env: { ...process.env, FACTORY_ROOT: root } });
+  const r = spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', cwd: tmp, env: { ...process.env, CODEIGNITE_ROOT: root } });
   return { status: r.status, out: r.stdout + r.stderr };
 };
 const cli = (...args) => cliAt(ROOT, ...args);
@@ -159,8 +159,8 @@ test('import without a terminal and without --yes shows the commands and applies
   assert.deepEqual(registryAt(root).repos, {});
 });
 
-test('import rejects a file that is not a factory configuration, and one with a bad gate or folder', () => {
-  assert.throws(() => planImport({ repos: {} }), /not a factory configuration file of format 1/);
+test('import rejects a file that is not a Codeignite configuration, and one with a bad gate or folder', () => {
+  assert.throws(() => planImport({ repos: {} }), /not a Codeignite configuration file of format 1/);
   const data = JSON.parse(fs.readFileSync(FILE, 'utf8'));
   assert.throws(() => planImport({ ...data, projects: { alpha: { ...data.projects.alpha, gates: [{ name: 'install', cmd: 'x' }] } } }), /"install" is reserved/);
   assert.throws(() => planImport({ ...data, projects: { alpha: { ...data.projects.alpha, folder: '../outside' } } }), /must be a folder name inside the workspace/);
@@ -180,7 +180,7 @@ test('an import keeps the proposals a user dismissed locally', () => {
 
 test('the server serves the export and the workflow of a scope with its proposals', async () => {
   const exported = await (await call('/api/export')).json();
-  assert.equal(exported.factoryConfig, 1);
+  assert.equal(exported.codeigniteConfig, 1);
   const global = await (await call('/api/workflow?scope=global')).json();
   assert.deepEqual(global.override, { stages: { plan: { skipFor: ['docs'] } } });
   assert.equal(global.proposals.length, 0);
