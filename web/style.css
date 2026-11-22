@@ -443,3 +443,6 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark .fd-start-done .fd-start-mark{border-color:var(--fd-green);color:var(--fd-green)}#factory-dark .fd-start-next{color:var(--fd-fg)}#factory-dark .fd-start-next .fd-start-mark{border-color:var(--fd-accent)}
 #factory-dark .fd-start li p{margin:4px 0 0;color:var(--fd-muted);max-width:76ch}#factory-dark .fd-start li pre{margin:8px 0 0;display:inline-block}#factory-dark .fd-start li .fd-actions{margin:10px 0 2px}#factory-dark .fd-start>.fd-caption{margin:12px 0 0}
 @media(max-width:680px){#factory-dark .fd-start{margin:12px 12px 0}}
+#factory-dark .fd-start-donelist{margin:10px 0 0;color:var(--fd-muted);font-size:13px}
+#factory-dark #kanban .fd-empty{grid-column:1/-1;box-sizing:border-box;justify-self:start;width:min(64ch,100%);max-width:min(64ch,100%)}
+#factory-dark #start:not([hidden])~#board #kanban .fd-empty,#factory-dark #start:not([hidden])~#work #detail .fd-empty{display:none}
