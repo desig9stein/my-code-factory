@@ -19,7 +19,7 @@ The defaults are read from files, not run. A placeholder `test` script, a suite 
 
 ## Editing in the board
 
-The Projects page of `factory board` edits a registered project: base branch, install command, gates, and what an agent the board runs may do in it. It also registers the repositories setup would find, and removes a project.
+The setup checklist and the agent settings of the machine are on the Settings page. The Projects page of `factory board` edits a registered project: base branch, install command, gates, and what an agent the board runs may do in it. It also registers the repositories setup would find, and removes a project.
 
 - The base branch must exist as `origin/<branch>` in the local repository. Run `git fetch origin <branch>` first when it does not. A base branch other than `origin/HEAD` is stored with `allowBaseMismatch`, so `factory doctor` does not report it.
 - A gate name uses lowercase letters, digits and hyphens, is unique in the project, and is not `install`, `reproduce` or `regress`.
