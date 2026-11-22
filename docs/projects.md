@@ -41,13 +41,13 @@ A project can name two commands that run for every task, in the task's own workt
 { "setup": "npm ci && npm run db:create", "teardown": "npm run db:drop" }
 ```
 
-- `setup` runs when the task is created, from the board or with `codeignite new` and `codeignite review`, right after the worktree exists. Its run is recorded as evidence with its log. A setup that fails does not stop the task from being created: the command says so, the task's history notes it, and `codeignite run <id> setup` runs it again.
+- `setup` runs when the task is created, right after the worktree exists. `codeignite new` and `codeignite review` wait for it. The board does not: it creates the task at once and runs the setup beside it, the task says "setting up" meanwhile, and no agent starts on it until the setup has finished. Its run is recorded as evidence with its log. A setup that fails does not stop the task from being created: the command says so, the task's history notes it, and `codeignite run <id> setup` runs it again.
 - `teardown` runs when the task is archived, before the worktree is removed. A teardown that fails is noted in the history and the task is archived all the same.
 - Both, like the checks and the agent sessions on the task, are told three things: `CODEIGNITE_TASK_ID`, `CODEIGNITE_TASK_DIR` (the worktree) and `CODEIGNITE_TASK_PORT`.
 
-The port is reserved for the task when it is created: the lowest from 41000 to 41999 that no task in flight holds, free again once the task is archived. Use it wherever a task would otherwise take a fixed port, for example `PORT=$CODEIGNITE_TASK_PORT npm run dev`, so two agents on the same project do not collide. The agent's brief names the port. Codeignite does not check that nothing else on the machine uses it, and a task created before this version has no port.
+The port is reserved for the task when it is created: the lowest from 41000 to 41999 that no task in flight holds, free again once the task is archived. Use it wherever a task would otherwise take a fixed port, for example `PORT=$CODEIGNITE_TASK_PORT npm run dev`, so two agents on the same project do not collide. The agent's brief names the port. Codeignite does not check that nothing else on the machine uses it. A task created before ports existed gets one the first time it is used.
 
-What setup writes into the worktree must be ignored by Git (`node_modules`, a local database file): checks run on a clean tree, and untracked files make it dirty. Files a teardown leaves behind are removed. Both commands are part of the team export.
+What setup writes into the worktree must be ignored by Git (`node_modules`, a local database file): checks run on a clean tree, and untracked files make it dirty. Codeignite looks right after the setup and names the files it left that Git does not ignore, in the command's output and in the task's history, so this is found then and not at the checks. Files a teardown leaves behind are removed. Both commands are part of the team export.
 
 ## GitHub issues
 

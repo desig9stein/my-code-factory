@@ -134,7 +134,7 @@
     applyQueueMode(); syncHash();
   };
   // A run that ended without reaching your review leaves the task with nobody on it, until someone works on it again.
-  const STOPPED = ['error', 'stalled', 'timeout', 'limit', 'missing', 'interrupted', 'usage'];
+  const STOPPED = ['error', 'stalled', 'timeout', 'limit', 'missing', 'interrupted', 'usage', 'budget'];
   const agentStopped = (i) => i.run?.status === 'ended' && STOPPED.includes(i.run.reason) && lastSeen(i) <= (Date.parse(i.run.endedAt || '') || 0) + 5000;
   const needsYou = (i) => Boolean(i.blocked) || i.stage === 'ready' || i.stage === 'approved' || agentStopped(i) || Boolean(i.followup?.needsYou);
   const failingGate = (i) => i.gates.find(g => g.status === 'failed');
@@ -143,7 +143,7 @@
     if (i.blocked) return { text: i.blockedKind === 'unclear' ? 'Your turn · answer the agent' : i.blockedKind === 'attempts' ? 'Your turn · agent stopped' : 'Your turn · paused', cls: i.blockedKind === 'attempts' ? 'fd-fail' : 'fd-warning' };
     if (i.stage === 'ready') return { text: 'Your turn · review', cls: 'fd-warning' };
     if (i.stage === 'approved') return { text: i.kind === 'review' ? 'Your turn · post the review' : 'Your turn · create the PR', cls: 'fd-warning' };
-    if (agentStopped(i)) return i.run.reason === 'usage' ? { text: 'Your turn · paused at your plan limit', cls: 'fd-warning' } : { text: 'Your turn · agent stopped', cls: 'fd-fail' };
+    if (agentStopped(i)) return i.run.reason === 'usage' ? { text: 'Your turn · paused at your plan limit', cls: 'fd-warning' } : i.run.reason === 'budget' ? { text: 'Your turn · paused at your daily cap', cls: 'fd-warning' } : { text: 'Your turn · agent stopped', cls: 'fd-fail' };
     if (i.followup?.needsYou) return { text: i.followup.failed.length ? 'Your turn · pull request checks failed' : 'Your turn · pull request has feedback', cls: i.followup.failed.length ? 'fd-fail' : 'fd-warning' };
     if (i.stage === 'pr-opened' && i.followup?.state === 'merged') return { text: 'Merged · archive when ready', cls: 'fd-pass' };
     if (i.stage === 'pr-opened') return { text: i.followup?.pending ? 'Pull request open · checks running' : 'Pull request open', cls: 'fd-muted' };
@@ -223,6 +223,7 @@
   // Starts and stops the user's own coding agent from the board, and says how its last run ended.
   function runBlock(i, manual) {
     if (!served) return manual;
+    if (i.settingUp) return `<p class="fd-now-live"><span class="fd-dot"></span>The project's setup command is running in this task's folder. "Run agent" appears when it has finished; its log is then under Proof.</p>`;
     const r = i.run, tool = escape(r?.harness || 'your coding agent');
     const log = r?.log ? `<a class="fd-btn" href="/${escape(r.log)}" target="_blank" rel="noopener" data-agent-log>Open the log</a>` : '';
     const own = (summary) => `<details class="fd-launch-more fd-keep"${kept('own-session', i.id)}><summary>${summary}</summary>${manual}</details>`;
@@ -232,7 +233,7 @@
     if (r?.status === 'queued') {
       return `<p class="fd-now-live"><span class="fd-idle"></span>Waiting for a free slot. At most ${number(data.agents?.maxConcurrent || 1)} agent${data.agents?.maxConcurrent === 1 ? ' runs' : 's run'} at once; change it under Settings.</p><div class="fd-actions"><button class="fd-btn" type="button" data-stop-agent>Take it out of the queue</button></div>`;
     }
-    const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit', 'timeout', 'usage'].includes(r.reason);
+    const failed = r && ['error', 'stalled', 'missing', 'interrupted', 'limit', 'timeout', 'usage', 'budget'].includes(r.reason);
     const last = r ? `<p class="${failed ? 'fd-warning' : 'fd-caption'}">The last run ended ${r.endedAt ? `${agoShort(r.endedAt)} ago` : 'without a record of when'} after ${plural(r.sessions, 'session')}: ${escape(r.detail || 'no reason was recorded.')}</p>${r.denials?.length && !/Refused commands/.test(r.detail || '') ? `<p class="fd-caption">Refused commands: ${r.denials.map(d => `<code>${escape(d)}</code>`).join(', ')}. If the agent needs one, allow it for this project under Projects, Edit.</p>` : ''}${r.limit ? `<p class="fd-warning">Your account's usage limit answered "${escape(r.limit.status)}"${r.limit.resetsAt ? `; it resets ${escape(new Date(r.limit.resetsAt).toLocaleString())}` : ''}.</p>` : ''}${r.said ? `<details class="fd-launch-more fd-keep"${kept('last-message', i.id)}><summary>The agent's last message</summary><pre class="fd-now-doc">${escape(r.said)}</pre></details>` : ''}` : '';
     const mode = data.projects.find(p => p.key === i.repo)?.agent?.permission || data.agents?.permission || '';
     return `${last}<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-run-agent>${r ? 'Run the agent again' : 'Run agent'}</button>${log}</div><p class="fd-caption fd-explain">Starts ${escape(data.agents?.label || 'your coding agent')} in the background with your own login, one fresh session per step, until the task needs you.${mode ? ` Permission mode: ${escape(data.agents?.modes?.[mode] || mode)}.` : ''} Change the mode and the limits under Settings.</p>${own('Or open a session yourself')}`;
@@ -442,10 +443,18 @@
   function planLine(usage, cap) {
     const names = { five_hour: '5-hour window', seven_day: 'weekly window' };
     if (!cap) return '<p class="fd-caption">The brake is off: agents run until your plan\'s limit stops them.</p>';
-    if (!usage?.windows?.length) return '<p class="fd-caption">Plan usage: not reported yet. Claude Code reports it while an agent runs; until then the brake cannot stop anything.</p>';
+    const ask = '<button class="fd-btn" type="button" data-check-usage>Ask Claude Code now</button>';
+    if (usage?.silent) return `<p class="fd-warning">Claude Code answered ${agoShort(usage.at)} ago and reported no plan usage. That is so with an API key, and it would be so if a version of Claude Code stopped reporting it. The share brake cannot work without the figure; use the daily cost cap beside it.</p><div class="fd-actions">${ask}</div>`;
+    if (!usage?.windows?.length) return `<p class="fd-caption">Plan usage: not asked yet. It is asked before an agent runs, and you can ask now.</p><div class="fd-actions">${ask}</div>`;
     const now = Date.now() / 1000;
     const parts = usage.windows.map(w => { const stale = w.resetsAt && w.resetsAt < now, pct = Math.round(w.used * 100); return `<span class="${!stale && pct >= cap ? 'fd-warning' : ''}">${escape(names[w.id] || w.id)} ${stale ? 'has reset since' : `${pct}%`}</span>`; });
-    return `<p class="fd-caption">Plan usage, as Claude Code reported it ${agoShort(usage.at)} ago: ${parts.join(' · ')}. Agents pause at ${escape(cap)}%.</p>`;
+    return `<p class="fd-caption">Plan usage, as Claude Code reported it ${agoShort(usage.at)} ago: ${parts.join(' · ')}. Agents pause at ${escape(cap)}%.</p><div class="fd-actions">${ask}</div>`;
+  }
+  // Says what Claude Code estimated for today's sessions, which is what the daily cap works from.
+  function spendLine(spend, cap) {
+    if (!cap && !spend?.sessions) return '';
+    const sum = `Today: ${plural(spend?.sessions || 0, 'session')}, estimated at $${Number(spend?.usd || 0).toFixed(2)} by Claude Code. An estimate, not a bill.`;
+    return `<p class="fd-caption${cap && spend && spend.usd >= cap ? ' fd-warning' : ''}">${sum}${cap ? ` Agents pause at $${escape(cap)} a day.` : ' No daily cap is set.'}</p>`;
   }
   function agentsSection() {
     if (!served) return '';
@@ -454,8 +463,8 @@
     const options = (list, value) => list.map(o => `<option value="${escape(o.id)}"${o.id === value ? ' selected' : ''}>${escape(o.label)}</option>`).join('');
     const explain = (list) => `<dl class="fd-agent-modes">${list.map(o => `<dt>${escape(o.label)}</dt><dd>${escape(o.about)}</dd>`).join('')}</dl>`;
     return `<h2 class="fd-section">Agents the board runs</h2><p class="fd-caption fd-explain">"Run agent" on a task starts ${escape(h.label)} on this machine with your own login, one fresh session per step, and stops when the task needs you. ${h.version ? `Found: ${escape(h.version)}.` : ''} These settings stay on this machine and are not part of the team export.</p>${h.version ? '' : `<p class="fd-warning">${escape(h.label)} was not found on this machine, so "Run agent" cannot start a session. ${escape(h.install)}</p>`}
-<form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label>Minutes per session, at most<input name="sessionMinutes" type="number" required min="${limits.sessionMinutes[0]}" max="${limits.sessionMinutes[1]}" value="${s.sessionMinutes}"></label><label>Pause agents at this share of my plan limit, in %<input name="usageCap" type="number" required min="${limits.usageCap[0]}" max="${limits.usageCap[1]}" value="${s.usageCap}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
-${planLine(agentsInfo.planUsage, s.usageCap)}<details class="fd-launch-more fd-keep"${kept('agent-choices', 'settings')}><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption fd-explain">The share of your plan limit is a brake: at that share no new agent session starts, and ten points past it a running session is interrupted. 0 switches it off. It works from the usage Claude Code reports during a session, so it knows nothing before the first run of the day. A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
+<form id="agents-form" class="fd-filter fd-agents"><label>What an agent may do<select name="permission">${options(h.permissionModes, s.permission)}</select></label><label>Account<select name="account">${options(h.accounts, s.account)}</select></label><label>Agents at once<input name="maxConcurrent" type="number" required min="${limits.maxConcurrent[0]}" max="${limits.maxConcurrent[1]}" value="${s.maxConcurrent}"></label><label>Sessions per run, at most<input name="maxSessions" type="number" required min="${limits.maxSessions[0]}" max="${limits.maxSessions[1]}" value="${s.maxSessions}"></label><label>Minutes per session, at most<input name="sessionMinutes" type="number" required min="${limits.sessionMinutes[0]}" max="${limits.sessionMinutes[1]}" value="${s.sessionMinutes}"></label><label>Pause agents at this share of my plan limit, in %<input name="usageCap" type="number" required min="${limits.usageCap[0]}" max="${limits.usageCap[1]}" value="${s.usageCap}"></label><label>Pause agents at this estimated cost a day, in $<input name="dailyBudget" type="number" required min="${limits.dailyBudget[0]}" max="${limits.dailyBudget[1]}" value="${s.dailyBudget}"></label><label class="fd-check"><input name="autoStart" type="checkbox"${s.autoStart ? ' checked' : ''}> Start an agent as soon as a task is created on the board</label><button class="fd-btn fd-primary" type="submit">Save</button><p id="agents-error" class="fd-failed" role="alert"></p></form>
+${planLine(agentsInfo.planUsage, s.usageCap)}${spendLine(agentsInfo.spend, s.dailyBudget)}<details class="fd-launch-more fd-keep"${kept('agent-choices', 'settings')}><summary>What the choices mean</summary><h3 class="fd-gap">What an agent may do</h3>${explain(h.permissionModes)}<h3 class="fd-gap">Account</h3>${explain(h.accounts)}<p class="fd-caption fd-explain">The share of your plan limit is a brake: at that share no new agent session starts, and ten points past it a running session is interrupted. 0 switches it off. The figure comes from Claude Code; it is asked for before a run when the last one is older than half an hour, with one very small request. The daily cost cap works for every kind of account: it adds up what Claude Code estimates for each session of the day. 0 switches it off. A project can have its own mode and extra allowed commands: Edit on its card. More agents at once use your plan's limits faster. Whatever the mode, a push, a pull request and a comment wait for your approval of the task.</p></details>`;
   }
   function renderProjectCards() {
     const match = p => `${p.key} ${p.remote}`.toLowerCase().includes(projectQuery.toLowerCase());
@@ -486,7 +495,7 @@ ${planLine(agentsInfo.planUsage, s.usageCap)}<details class="fd-launch-more fd-k
     const f = e.target.elements;
     $('agents-error').textContent = '';
     try {
-      const saved = await post('/api/agents/settings', { permission: f.permission.value, account: f.account.value, maxConcurrent: Number(f.maxConcurrent.value), maxSessions: Number(f.maxSessions.value), sessionMinutes: Number(f.sessionMinutes.value), usageCap: Number(f.usageCap.value), autoStart: f.autoStart.checked });
+      const saved = await post('/api/agents/settings', { permission: f.permission.value, account: f.account.value, maxConcurrent: Number(f.maxConcurrent.value), maxSessions: Number(f.maxSessions.value), sessionMinutes: Number(f.sessionMinutes.value), usageCap: Number(f.usageCap.value), dailyBudget: Number(f.dailyBudget.value), autoStart: f.autoStart.checked });
       agentsInfo.settings = saved.settings;
       delete e.target.dataset.dirty;
       notice('Agent settings saved. They apply to the next run.');
@@ -1060,6 +1069,13 @@ ${planLine(agentsInfo.planUsage, s.usageCap)}<details class="fd-launch-more fd-k
     if (e.target.closest('[data-start-new]')) return openNew();
     const open = e.target.closest('[data-open-task]'); if (open) openTask(open.dataset.openTask);
   };
+  // Asks Claude Code for the plan's usage now.
+  document.addEventListener('click', e => {
+    const button = e.target.closest('[data-check-usage]');
+    if (!button) return;
+    button.disabled = true; button.textContent = 'Asking…';
+    post('/api/agents/usage', {}).then(result => { if (agentsInfo) agentsInfo.planUsage = result.planUsage; delete $('agents-form')?.dataset.dirty; renderSettings(); notice(result.planUsage?.windows?.length ? 'Claude Code reported your plan usage.' : 'Claude Code reported no plan usage.'); }, error => { notice(error.message, true); button.disabled = false; button.textContent = 'Ask Claude Code now'; });
+  });
   // Installs the guard hooks from the board, after saying which file changes.
   document.addEventListener('click', e => {
     if (!e.target.closest('[data-install-hooks]')) return;

@@ -25,6 +25,8 @@ const { getRepo } = await import('../lib/registry.mjs');
 const { loadState } = await import('../lib/state.mjs');
 const { listEvidence } = await import('../lib/evidence.mjs');
 const { exportConfig, planImport } = await import('../lib/share.mjs');
+const { settingUp } = await import('../lib/tasksetup.mjs');
+const { startServer } = await import('../lib/server.mjs');
 
 const write = (file, text) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -119,3 +121,57 @@ test('archiving runs the teardown first, and a teardown that fails does not keep
   const notes = JSON.parse(fs.readFileSync(path.join(ROOT, 'issues', 'demo-2', 'state.json'), 'utf8')).history.map((h) => h.note);
   assert.ok(notes.some((note) => /Teardown failed \(exit 7\)/.test(note)));
 });
+
+test('files a setup leaves that Git does not ignore are named at once', () => {
+  updateProject('demo', { setup: 'echo secret > local.env && mkdir -p .task && echo ok > .task/seen', teardown: '' });
+  issue(4);
+  const made = cli('new', 'demo#4');
+  assert.equal(made.status, 0, made.out);
+  assert.match(made.out, /Setup finished\.\nSetup left files Git does not ignore: local\.env\.\nAdd them to \.gitignore; until then the checks refuse the folder as changed\./);
+  assert.match(loadState('demo-4').history.at(-1).note, /Setup left files Git does not ignore: local\.env\./);
+  // What Git ignores is not named.
+  assert.ok(!/does not ignore: [^\n]*\.task/.test(made.out));
+});
+
+test('a task made before ports existed gets one the first time it is used', () => {
+  const file = path.join(ROOT, 'issues', 'demo-4', 'state.json');
+  const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete state.port;
+  fs.writeFileSync(file, JSON.stringify(state));
+  assert.equal(loadState('demo-4').port, undefined);
+  assert.match(cli('next', 'demo-4').out, /Port 4100\d is reserved for this task/);
+  assert.ok(Number.isInteger(loadState('demo-4').port));
+  // It keeps that port from then on.
+  const kept = loadState('demo-4').port;
+  cli('next', 'demo-4');
+  assert.equal(loadState('demo-4').port, kept);
+});
+
+test('the board creates a task at once and runs its setup beside it', async () => {
+  updateProject('demo', { setup: 'sleep 2 && mkdir -p .task && echo late > .task/seen' });
+  const server = await startServer(0, { pairing: false });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const token = /__factoryToken="([0-9a-f]+)"/.exec(await (await fetch(base)).text())[1];
+  const call = (pathname, body) => fetch(`${base}${pathname}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Factory-Token': token }, body: JSON.stringify(body) });
+  const board = async () => { const text = await (await fetch(`${base}/board-data.js`)).text(); assert.match(text, /^window\.__factoryData\(/, text.slice(0, 400)); return JSON.parse(text.slice(text.indexOf('(') + 1, text.lastIndexOf(')'))); };
+  const wait = async (check, what) => { for (let n = 0; n < 200; n++) { if (await check()) return; await new Promise((r) => setTimeout(r, 50)); } assert.fail(`Timed out waiting for ${what}.`); };
+  try {
+    issue(5);
+    const started = Date.now();
+    const made = await call('/api/task/start', { project: 'demo', number: 5, kind: 'new' });
+    assert.equal(made.status, 200, await made.clone().text());
+    // The answer does not wait for the two seconds the setup takes.
+    assert.ok(Date.now() - started < 1900, `creating the task took ${Date.now() - started} ms`);
+    await wait(() => settingUp('demo-5'), 'the setup to start');
+    assert.equal((await board()).issues.find((i) => i.id === 'demo-5').settingUp, true);
+    // No agent starts in a folder that is still being prepared.
+    assert.match((await (await call('/api/agent/run', { id: 'demo-5' })).json()).error, /The setup command of demo-5 is still running/);
+    await wait(() => !settingUp('demo-5') && listEvidence('demo-5').length === 1, 'the setup to finish');
+    assert.equal(seen('demo-5'), 'late');
+    assert.equal((await board()).issues.find((i) => i.id === 'demo-5').settingUp, false);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
+});
+

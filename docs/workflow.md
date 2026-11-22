@@ -65,6 +65,7 @@ Stopping the board (`codeignite board --stop`) ends the sessions it started. A r
 | Agents at once (`maxConcurrent`) | 2 | From 1 to 8. A further "Run agent" waits in a queue. More agents use your plan's limits faster. |
 | Sessions per run (`maxSessions`) | 12 | From 1 to 40. A brake against a run that loops. |
 | Share of the plan limit (`usageCap`) | 80 | From 0 to 100, in percent. See the brake below. 0 switches it off. |
+| Cost a day (`dailyBudget`) | 0 | From 0 to 1000, in whole dollars of Claude Code's estimate. See the daily cap below. 0 switches it off. |
 | Minutes per session (`sessionMinutes`) | 60 | From 1 to 480. A session that runs longer is interrupted and the run stops, so a hung session does not hold its slot. Committed work stays. |
 | Start on creation (`autoStart`) | off | A task created on the board gets an agent at once. |
 
@@ -74,7 +75,11 @@ Stopping the board (`codeignite board --stop`) ends the sessions it started. A r
 - ten points past the share, a running session is interrupted. Just past it, the session may finish its step first, so no work is cut off for a point or two;
 - a window whose reset time has passed no longer counts.
 
-The brake knows only what Claude Code reported. Before the first session of the day it has no figure, and a session billed by an API key reports none, so in both cases it stops nothing; Settings says what was last reported and when. It is a share of your plan, not a cost: it leaves room for your own work and does not show dollars.
+The figure comes from Claude Code. When the last one is older than half an hour, or there is none, Codeignite asks for it before a run starts, with the smallest request there is: one word from the fastest model, no tools, nothing kept. "Ask Claude Code now" on the Settings page does the same. So a run that would start above the share does not start.
+
+A session billed by an API key reports no plan usage, and a version of Claude Code could stop reporting it. Codeignite then keeps "answered, reported nothing", the share brake stops nothing, and Settings says so in plain words and points at the daily cap. It is a share of your plan, not a cost: it leaves room for your own work and does not show dollars.
+
+**The daily cap on cost.** Claude Code reports an estimated cost with every session, whatever the account. Codeignite adds these up per day in `cache/spend.json`. With a cap set, no session starts once the day's estimate has reached it: the run ends with "Agents are paused at the cost you allow per day", and it starts again the next day or when you raise the amount. The figure is Claude Code's estimate, not a bill; on a subscription it is a measure of how much was used, not money owed.
 
 Permission modes:
 
