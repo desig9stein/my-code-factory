@@ -126,7 +126,7 @@ test('posting is refused until the draft is approved', () => {
 
 test('the board approves only the draft it showed', async () => {
   const { startServer } = await import('../lib/server.mjs');
-  const server = await startServer(0, { pairing: false, followEvery: 0 });
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];

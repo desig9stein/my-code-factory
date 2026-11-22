@@ -506,7 +506,7 @@ test('tokens count the calls that acted on the issue once each, plus its subagen
 
 test('the board server archives only with its token and its own host', async () => {
   const { startServer } = await import('../lib/server.mjs');
-  const server = await startServer(0, { pairing: false, followEvery: 0 });
+  const server = await startServer(0, { pairing: false });
   const port = server.address().port;
   const base = `http://127.0.0.1:${port}`;
   try {

@@ -522,7 +522,7 @@ test('a task at human review can be sent back with a reason, and its lesson reac
 
 test('the server sends a task back only with the token and the version the board showed', async () => {
   const state = at('ready', 'feature');
-  const server = await startServer(0, { pairing: false, followEvery: 0 });
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];
@@ -676,7 +676,7 @@ test('activity inside the worktree is told apart from a call that only names the
 });
 
 test('the board records a pull request the user opened by hand, only at the open-the-PR step', async () => {
-  const server = await startServer(0, { pairing: false, followEvery: 0 });
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];
@@ -700,7 +700,7 @@ test('the board pushes the approved branch and opens the pull request, and refus
   fs.chmodSync(path.join(stub, 'gh'), 0o755);
   const oldPath = process.env.PATH;
   process.env.PATH = `${stub}${path.delimiter}${oldPath}`;
-  const server = await startServer(0, { pairing: false, followEvery: 0 });
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];

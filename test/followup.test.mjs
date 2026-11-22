@@ -143,7 +143,7 @@ test('the user\'s text sends the task back to the agent, and the update answers 
 });
 
 test('the board asks GitHub on request and sends feedback only with its token', async () => {
-  const server = await startServer(0, { pairing: false, followEvery: 0 });
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   const token = /__factoryToken="([0-9a-f]+)"/.exec(await (await fetch(base)).text())[1];
   const call = (pathname, body, headers = { 'X-Factory-Token': token }) => fetch(`${base}${pathname}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });

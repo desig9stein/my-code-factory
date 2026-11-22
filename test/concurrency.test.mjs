@@ -150,7 +150,7 @@ test('settings changed by two processes at once keep both changes', async () => 
 });
 
 test('the board answers at once while GitHub is slow, and requests for the same answer share one call', async () => {
-  const server = await startServer(0, { pairing: false, followEvery: 0 });
+  const server = await startServer(0, { pairing: false });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     task(5);
