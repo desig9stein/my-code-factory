@@ -91,7 +91,7 @@
   function renderSettings() {
     // Values typed and not yet saved stay until they are saved.
     if ($('agents-form')?.dataset.dirty) return;
-    $('settings').innerHTML = `<header class="fd-page-head"><div><h2 class="fd-h1">Settings</h2><p class="fd-desc">Settings of this machine: the tools Codeignite needs and the agents the board runs. They are not part of the team export.</p></div></header>${checklist(true)}${agentsSection()}`;
+    $('settings').innerHTML = `<header class="fd-page-head"><div><h2 class="fd-h1">Settings</h2><p class="fd-desc">Settings of this machine: the tools Codeignite needs and the agents the board runs. They are not part of the team export.</p></div></header>${checklist(true)}${agentsSection()}${notifySection()}`;
   }
   async function loadSetup() {
     if (!served) return;
@@ -130,13 +130,17 @@
     try { localStorage.setItem('factory-queue-mode', mode); } catch { /* The choice lasts for this visit only. */ }
     applyQueueMode(); syncHash();
   };
-  const needsYou = (i) => Boolean(i.blocked) || i.stage === 'ready' || i.stage === 'approved';
+  // A run that ended without reaching your review leaves the task with nobody on it, until someone works on it again.
+  const STOPPED = ['error', 'stalled', 'timeout', 'limit', 'missing', 'interrupted'];
+  const agentStopped = (i) => i.run?.status === 'ended' && STOPPED.includes(i.run.reason) && lastSeen(i) <= (Date.parse(i.run.endedAt || '') || 0) + 5000;
+  const needsYou = (i) => Boolean(i.blocked) || i.stage === 'ready' || i.stage === 'approved' || agentStopped(i);
   const failingGate = (i) => i.gates.find(g => g.status === 'failed');
   // Says what the task waits for; colour is never the only signal.
   function queueStatus(i) {
     if (i.blocked) return { text: i.blockedKind === 'unclear' ? 'Your turn · answer the agent' : i.blockedKind === 'attempts' ? 'Your turn · agent stopped' : 'Your turn · paused', cls: i.blockedKind === 'attempts' ? 'fd-fail' : 'fd-warning' };
     if (i.stage === 'ready') return { text: 'Your turn · review', cls: 'fd-warning' };
     if (i.stage === 'approved') return { text: i.kind === 'review' ? 'Your turn · post the review' : 'Your turn · create the PR', cls: 'fd-warning' };
+    if (agentStopped(i)) return { text: 'Your turn · agent stopped', cls: 'fd-fail' };
     const failed = failingGate(i);
     if (failed) return { text: `Check "${failed.name}" failed`, cls: 'fd-fail' };
     return { text: `Agent · ${(i.stageTitle || i.stage).replaceAll('-', ' ')}`, cls: 'fd-muted' };
@@ -972,11 +976,49 @@
     try { await navigator.clipboard.writeText($('new-command').textContent); notice('Task command copied. Run it in your terminal.'); }
     catch { notice('Clipboard unavailable. Select and copy the command shown in the dialog.'); }
   };
+  // ----- notifications -----
+  // The tab title always counts the tasks that wait for you. A notification of the system is an extra the user
+  // switches on in Settings; it is shown while the board is open in a tab that is not in front.
+  let notifyOn = false;
+  try { notifyOn = localStorage.getItem('factory-notify') === 'on'; } catch { /* Off for this visit. */ }
+  const canNotify = () => typeof Notification === 'function';
+  let waiting = null;
+  function tellNews(next) {
+    const now = new Map(next.issues.filter(needsYou).map(i => [i.id, queueStatus(i).text.replace('Your turn · ', '')]));
+    document.title = now.size ? `(${now.size}) Codeignite` : 'Codeignite';
+    // The first load is the state of things, not news.
+    if (waiting && notifyOn && canNotify() && Notification.permission === 'granted' && (document.hidden || !document.hasFocus())) {
+      for (const i of next.issues) {
+        const what = now.get(i.id);
+        if (!what || waiting.get(i.id) === what) continue;
+        // One notification per task: a newer one replaces the older.
+        const note = new Notification(`${i.repo} #${i.issue} needs you: ${what}`, { body: i.title, tag: `factory-${i.id}` });
+        note.onclick = () => { window.focus(); openTask(i.id); note.close(); };
+      }
+    }
+    waiting = now;
+  }
+  function notifySection() {
+    if (!served) return '';
+    const state = !canNotify() ? 'This browser has no notifications.' : Notification.permission === 'denied' ? 'This browser blocks notifications for this page. Allow them for 127.0.0.1 in the browser\'s site settings, then switch this on.' : '';
+    return `<h2 class="fd-section">Notifications</h2><label class="fd-check"><input type="checkbox" id="notify-toggle"${notifyOn && canNotify() && Notification.permission === 'granted' ? ' checked' : ''}${canNotify() ? '' : ' disabled'}> Tell me on this computer when a task needs me</label>${state ? `<p class="fd-warning">${escape(state)}</p>` : ''}<p class="fd-caption fd-explain">A task needs you when it reaches your review, when the agent has questions, and when an agent stopped without finishing. The notification is shown while the board is open in a tab that is not in front; clicking it opens the task. The tab title always shows how many tasks wait for you. This choice is kept in this browser.</p>`;
+  }
+  $('settings').addEventListener('change', async e => {
+    if (e.target.id !== 'notify-toggle') return;
+    let on = e.target.checked;
+    if (on && Notification.permission !== 'granted') on = (await Notification.requestPermission()) === 'granted';
+    notifyOn = on;
+    try { localStorage.setItem('factory-notify', on ? 'on' : 'off'); } catch { /* Kept for this visit. */ }
+    renderSettings();
+    notice(on ? 'Notifications are on for this browser.' : e.target.checked ? 'The browser did not allow notifications.' : 'Notifications are off.', !on && e.target.checked);
+  });
   // The server could not build the board data, for example because repos.json is damaged.
   window.__factoryError = message => { lost = false; notice(`The board data could not be loaded: ${message}`, true); if (served) $('connection').textContent = 'Connected · data unavailable'; };
   window.__factoryData = next => {
     lost = false; if (!served) $('connection').textContent = 'Static snapshot';
     if (next.stamp === data.stamp) return;
+    // News is told even while the page holds back a redraw for a field in use.
+    tellNews(next);
     // Keep drafts and open explanations stable while the user interacts.
     if (data.stamp && (document.querySelector('dialog[open]') || [...document.querySelectorAll('#detail .fd-body details[open]:not(.fd-keep)')].some(el => el.offsetParent !== null) || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName))) { paused = true; tick(); return; }
     paused = false;
