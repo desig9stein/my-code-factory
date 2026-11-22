@@ -320,6 +320,12 @@ test('the board answers only a browser paired from the terminal', async () => {
     assert.ok(!cookie.includes(key));
     assert.equal((await fetch(`${base}/pair?code=${code}`, { redirect: 'manual' })).status, 403);
     const mine = { Cookie: cookie.split(';')[0] };
+    // A cookie of the wrong bytes is an unpaired browser, not an error; a second cookie of the name beside the right one does not unpair.
+    const name = cookie.split('=')[0];
+    assert.equal((await fetch(`${base}/board-data.js`, { headers: { Cookie: `${name}=${'\u00e9'.repeat(64)}` } })).status, 401);
+    assert.equal((await fetch(`${base}/board-data.js`, { headers: { Cookie: `${name}=${'%C3%A9'.repeat(32)}` } })).status, 401);
+    assert.equal((await fetch(`${base}/board-data.js`, { headers: { Cookie: `${name}=bad; ${mine.Cookie}` } })).status, 200);
+    assert.equal((await fetch(`${base}/api/pair/start`, { method: 'POST', headers: { 'X-Factory-Key': 'k'.repeat(63) + '%' } })).status, 403);
     assert.match(await (await fetch(base, { headers: mine })).text(), /__factoryToken=/);
     assert.equal((await fetch(`${base}/board-data.js`, { headers: mine })).status, 200);
     // The cookie of another board, or a changed one, is not this board's.

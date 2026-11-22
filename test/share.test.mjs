@@ -257,3 +257,26 @@ test('a shared file cannot point a project elsewhere, and every command it carri
   write(file, JSON.stringify({ codeigniteConfig: 1, defaults: { branchPattern: { a: 1 } }, projects: {} }));
   assert.match(cliAt(path.join(mine, 'data'), 'import', file, '--yes').out, /The default "branchPattern" is \{"a":1\}/);
 });
+
+test('the server refuses ids, projects and steps that are not what they claim, and does not say where its data is', async () => {
+  // An id that is not text is not turned into one.
+  for (const route of ['/api/archive', '/api/unblock', '/api/agent/run', '/api/agent/stop', '/api/pr/create']) {
+    const refused = await call(route, { id: ['beta-1'] });
+    assert.equal(refused.status, 400, route);
+    assert.match((await refused.json()).error, /Invalid issue id/, route);
+  }
+  // Names every object answers to are not projects or steps.
+  for (const name of ['__proto__', 'constructor', 'toString']) {
+    assert.match((await (await call(`/api/people?project=${name}`)).json()).error, /Unknown repo/);
+    assert.match((await (await call(`/api/workflow/preview?scope=${name}&stage=implement`)).json()).error, /Unknown repo/);
+    assert.match((await (await call(`/api/workflow/preview?scope=global&stage=${name}`)).json()).error, /is not a step of this workflow\. Steps: intake, /);
+  }
+  // A folder named like a log, and an address that is not one, are not found; no system error text comes back.
+  fs.mkdirSync(path.join(ROOT, 'issues', 'beta-9', 'd.log'), { recursive: true });
+  assert.equal((await call('/issues/beta-9/d.log')).status, 404);
+  assert.equal((await call('/issues/%zz.log')).status, 404);
+  const ping = await (await call('/api/ping')).json();
+  assert.deepEqual(Object.keys(ping).sort(), ['board', 'pid']);
+  assert.match(ping.board, /^[0-9a-f]{16}$/);
+  assert.ok(!JSON.stringify(ping).includes(tmp));
+});

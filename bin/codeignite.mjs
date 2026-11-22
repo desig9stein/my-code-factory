@@ -14,7 +14,7 @@ import { applyImport, exportConfig, planImport } from '../lib/share.mjs';
 import { writeBoard } from '../lib/board.mjs';
 import { checkCommits, checkPrBody, commitsOnBranch, mergeBase, prBodyPath } from '../lib/checks.mjs';
 import { addManual, addVerdict, fileSha256, listEvidence, runRecorded, sealEvidence, verifyChain } from '../lib/evidence.mjs';
-import { factoryRoot, issueDir, subdirOf, workspace, worktreesDir } from '../lib/paths.mjs';
+import { factoryRoot, issueDir, rootMark, subdirOf, workspace, worktreesDir } from '../lib/paths.mjs';
 import { buildGraph, coverage, detectLinks, reach } from '../lib/graph.mjs';
 import { ensurePort } from '../lib/taskenv.mjs';
 import { runSetup } from '../lib/tasksetup.mjs';
@@ -25,6 +25,7 @@ import { readKey } from '../lib/pairing.mjs';
 import { getRepo, loadRegistry, parseRef } from '../lib/registry.mjs';
 import { regress } from '../lib/regress.mjs';
 import { dayFacts, writePlainReport } from '../lib/report.mjs';
+import { pingBoard } from '../lib/port.mjs';
 import { boardPort, startServer } from '../lib/server.mjs';
 import { git, run, tryGit } from '../lib/sh.mjs';
 import { acceptanceCriteria, advance, approvalKey, approve, archive, blockKind, capAttempts, consumerImpact, gateStatus, inspect, sendBack, unblock, recordPosted, recordPr, regressStatus, reviewBody, reviewPath, reviewVerdict } from '../lib/stages.mjs';
@@ -609,15 +610,15 @@ const commands = {
     const pidFile = path.join(factoryRoot(), `.board-${boardPort()}.pid`);
     const url = `http://127.0.0.1:${boardPort()}/`;
     // Resolves to the Codeignite root the server on this port serves, or null when nothing answers.
-    const ping = () => fetch(`${url}api/ping`).then((r) => r.json()).catch(() => null);
-    const servedRoot = () => ping().then((j) => (j ? j.root || 'other' : null));
-    const up = async () => (await servedRoot()) === factoryRoot();
+    const ping = () => pingBoard(boardPort());
+    const servedRoot = () => ping().then((j) => (j ? j.board : null));
+    const up = async () => (await servedRoot()) === rootMark();
     if (args.stop) {
       // Kills only the process that answers on the port as this installation's board; a stale PID file may name anything.
       const live = await ping();
       const recorded = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) : null;
       fs.rmSync(pidFile, { force: true });
-      if (!live || live.root !== factoryRoot()) return console.log(`No board of this installation answers on port ${boardPort()}; nothing was stopped.`);
+      if (!live || live.board !== rootMark()) return console.log(`No board of this installation answers on port ${boardPort()}; nothing was stopped.`);
       const pid = Number.isInteger(live.pid) ? live.pid : recorded;
       if (!pid) return console.log('The running board does not report its process id. Stop it from the terminal that started it.');
       process.kill(pid);
@@ -629,8 +630,8 @@ const commands = {
       return;
     }
     const running = await servedRoot();
-    if (running && running !== factoryRoot()) {
-      throw new Error(`Port ${boardPort()} serves another board (${running}). Stop it, or set CODEIGNITE_PORT to a free port.`);
+    if (running && running !== rootMark()) {
+      throw new Error(`Port ${boardPort()} serves the board of another data folder. Stop it, or set CODEIGNITE_PORT to a free port.`);
     }
     if (!running) {
       const child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'serve'], { detached: true, stdio: 'ignore' });
@@ -653,8 +654,12 @@ const commands = {
     else console.log(plan.reason);
     if (!plan.move && !plan.oldFiles.length && !hooksPresent()) return console.log('Nothing to do.');
     if (plan.move) {
-      const live = await fetch(`http://127.0.0.1:${boardPort()}/api/ping`).then((r) => r.json()).catch(() => null);
-      if (live && live.root === plan.from) throw new Error('The board is running on this data. Stop it with "codeignite board --stop", then run this again.');
+      // A board of this data may run on any port; each one left its port in the folder.
+      const ports = new Set([boardPort(), ...fs.readdirSync(plan.from).map((name) => Number(/^\.board-(\d+)\.pid$/.exec(name)?.[1])).filter(Boolean)]);
+      for (const port of ports) {
+        const live = await pingBoard(port);
+        if (live && live.board === rootMark(plan.from)) throw new Error(`The board is running on this data, on port ${port}. Stop it with "CODEIGNITE_PORT=${port} codeignite board --stop", then run this again.`);
+      }
     }
     if (!args.yes) {
       if (!process.stdin.isTTY) throw new Error('There is no terminal to ask in. Run "codeignite migrate --yes" to go ahead.');
