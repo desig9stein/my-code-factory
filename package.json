@@ -1,13 +1,15 @@
 {
-  "name": "my-code-factory",
+  "name": "codeignite",
   "version": "0.1.0",
   "description": "Codeignite: a local code factory with recorded verification, a dark review desk, and transparent usage scenarios.",
   "type": "module",
   "private": true,
-  "bin": { "factory": "bin/factory.mjs", "factory-guard": "bin/guard.mjs" },
-  "engines": { "node": ">=22" },
+  "bin": { "codeignite": "bin/codeignite.mjs", "cig": "bin/codeignite.mjs", "factory": "bin/factory.mjs", "codeignite-guard": "bin/guard.mjs" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "start": "node bin/factory.mjs serve",
+    "start": "node bin/codeignite.mjs serve",
     "test": "node --test test/*.test.mjs",
     "verify": "node scripts/verify.mjs"
   }

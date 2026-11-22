@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude Code hook entry for the factory.
+// Claude Code hook entry for Codeignite.
 // Usage: guard.mjs pre | post | session   (reads the hook payload from stdin)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -56,7 +56,7 @@ try {
     if (states.length) {
       const lines = states.map((s) => `- ${s.id}: ${s.blocked ? 'blocked' : s.stage} (branch ${s.branch}, worktree ${s.worktree})`);
       process.stdout.write(
-        `Codeignite, tasks in flight:\n${lines.join('\n')}\nWork on these only through the factory skill: "factory next <id>" prints what the current stage needs and which skills and agents to use.\n`,
+        `Codeignite, tasks in flight:\n${lines.join('\n')}\nWork on these only through the Codeignite skill: "codeignite next <id>" prints what the current stage needs and which skills and agents to use.\n`,
       );
     }
   }
@@ -69,7 +69,7 @@ try {
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
           permissionDecision: 'ask',
-          permissionDecisionReason: `The factory guard failed (${err.message}), so it could not check this action.`,
+          permissionDecisionReason: `The Codeignite guard failed (${err.message}), so it could not check this action.`,
         },
       }),
     );

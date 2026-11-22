@@ -7,7 +7,7 @@ import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const BIN = fileURLToPath(new URL('../bin/factory.mjs', import.meta.url));
+const BIN = fileURLToPath(new URL('../bin/codeignite.mjs', import.meta.url));
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'factory-report-')));
 const ROOT = path.join(tmp, 'data');
 const WS = path.join(tmp, 'ws');
@@ -16,8 +16,8 @@ const STUB = path.join(tmp, 'stub');
 const ASKED = path.join(tmp, 'claude-input.txt');
 
 Object.assign(process.env, {
-  FACTORY_ROOT: ROOT,
-  FACTORY_WORKSPACE: WS,
+  CODEIGNITE_ROOT: ROOT,
+  CODEIGNITE_WORKSPACE: WS,
   PATH: `${STUB}${path.delimiter}${process.env.PATH}`,
   ASKED,
   GIT_AUTHOR_NAME: 'Test',
@@ -108,7 +108,7 @@ test('commits are yours only, from the day only', () => {
 test('the summary states the counts, the task movement and the pull requests', () => {
   const { summary, pullRequests } = dayFacts(TODAY);
   assert.deepEqual(pullRequests.opened.map((p) => p.number), [9]);
-  assert.match(summary, /You worked in 1 project: 1 factory task, 1 commit, 1 pull request opened, 1 merged\./);
+  assert.match(summary, /You worked in 1 project: 1 Codeignite task, 1 commit, 1 pull request opened, 1 merged\./);
   assert.match(summary, /- app #7, "add returns the wrong sum": made ready for your review, approved by you, pull request opened, moved from plan to PR opened\. Checks run: 1 passed, 1 failed\. https:\/\/github\.com\/acme\/app\/pull\/9/);
   assert.match(summary, /- Merged acme\/app#8, "docs\(app\): readme"\./);
   assert.match(summary, /- app: 1 commit\. fix\(app\): return the sum\./);

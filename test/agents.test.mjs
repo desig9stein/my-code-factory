@@ -1,4 +1,4 @@
-// Covers the runs the factory starts by itself: settings, what a session may do, the stage loop and the queue.
+// Covers the runs Codeignite starts by itself: settings, what a session may do, the stage loop and the queue.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,8 +12,8 @@ const WS = path.join(tmp, 'ws');
 const ARGS = path.join(tmp, 'args.jsonl');
 const FAKE = fileURLToPath(new URL('./fixtures/fake-agent.mjs', import.meta.url));
 fs.chmodSync(FAKE, 0o755);
-delete process.env.FACTORY_PORT;
-Object.assign(process.env, { FACTORY_ROOT: ROOT, FACTORY_WORKSPACE: WS, FACTORY_CLAUDE_BIN: FAKE, FAKE_AGENT_ARGS: ARGS, CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'), ANTHROPIC_API_KEY: 'sk-test-not-real', CLAUDECODE: '1' });
+delete process.env.CODEIGNITE_PORT;
+Object.assign(process.env, { CODEIGNITE_ROOT: ROOT, CODEIGNITE_WORKSPACE: WS, CODEIGNITE_CLAUDE_BIN: FAKE, FAKE_AGENT_ARGS: ARGS, CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'), ANTHROPIC_API_KEY: 'sk-test-not-real', CLAUDECODE: '1' });
 
 const { agentSettings, checkProjectAgent, createRunner, haltReason, readRun, runTask, runView, saveAgentSettings, sessionPolicy } = await import('../lib/agents.mjs');
 const { harness, harnesses } = await import('../lib/harnesses.mjs');
@@ -63,11 +63,11 @@ test('agent settings have safe defaults, reject bad values and keep the rest of 
   assert.deepEqual([agentSettings().permission, agentSettings().maxConcurrent], ['scoped', 2]);
 });
 
-test('a scoped session may run the factory, Git without push and the project commands, and nothing with brackets', () => {
+test('a scoped session may run Codeignite, Git without push and the project commands, and nothing with brackets', () => {
   const policy = sessionPolicy(getRepo('demo'));
   assert.equal(policy.permission, 'scoped');
   for (const prefix of ['factory', 'git commit', 'npm ci', 'npm test']) assert.ok(policy.allow.includes(prefix), prefix);
-  assert.ok(policy.allow.some((prefix) => /^node '.*bin\/factory\.mjs'$/.test(prefix)));
+  assert.ok(policy.allow.some((prefix) => /^node '.*bin\/codeignite\.mjs'$/.test(prefix)));
   // Agents often name the folder instead of working in it; reading through "git -C <worktree>" is allowed, writing is not.
   const elsewhere = sessionPolicy(getRepo('demo'), agentSettings(), '/data/worktrees/demo-1').allow;
   assert.ok(elsewhere.includes('git -C /data/worktrees/demo-1 diff') && !elsewhere.some((prefix) => /-C .* (commit|push)/.test(prefix)));
@@ -95,7 +95,7 @@ test('the Claude Code command carries the mode, the rules and the model, and dro
   assert.deepEqual(harnesses().map((item) => item.id), ['claude']);
   const scoped = tool.command({ prompt: 'hello', model: 'opus', permission: 'scoped', allow: ['npm test'], deny: ['git push'], dirs: ['/data/issues/app-1'], protect: ['/data/issues/app-1/state.json', '/data/issues/app-1/evidence/**'], account: 'login' });
   assert.deepEqual(scoped.args, ['-p', 'hello', '--output-format', 'stream-json', '--verbose', '--model', 'opus', '--add-dir', '/data/issues/app-1', '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(npm test:*)', '--disallowedTools', 'Bash(git push:*)', 'Edit(//data/issues/app-1/state.json)', 'Edit(//data/issues/app-1/evidence/**)']);
-  // The files only the factory writes are refused in every mode, also where the factory adds no other rule.
+  // The files only Codeignite writes are refused in every mode, also where Codeignite adds no other rule.
   assert.deepEqual(tool.command({ prompt: 'x', permission: 'own', protect: ['/d/state.json'] }).args.slice(-2), ['--disallowedTools', 'Edit(//d/state.json)']);
   assert.deepEqual(tool.command({ prompt: 'x', permission: 'auto', secret: ['/d/.board-key'] }).args.slice(-3), ['--disallowedTools', 'Read(//d/.board-key)', 'Edit(//d/.board-key)']);
   assert.deepEqual(tool.parse(JSON.stringify({ type: 'assistant', message: { content: [null, 5, 'x'] } })), []);
@@ -124,7 +124,7 @@ test('a run starts one fresh session per stage and stops when the task is the us
   const [first] = calls();
   assert.equal(calls().length, 3);
   assert.equal(first.cwd, path.join(ROOT, 'worktrees', id));
-  assert.match(first.args[1], /^Work on the Codeignite task demo-1\. Start by running: node '.*factory\.mjs' next demo-1\nDo only the current stage \("triage"\)/);
+  assert.match(first.args[1], /^Work on the Codeignite task demo-1\. Start by running: node '.*codeignite\.mjs' next demo-1\nDo only the current stage \("triage"\)/);
   // The default model of the stage is the session's model, and the session uses the login, not the key in the shell.
   assert.equal(first.args[first.args.indexOf('--model') + 1], 'opus');
   assert.deepEqual([first.key, first.nested], [null, null]);
@@ -183,7 +183,7 @@ test('the queue runs at most the configured number of agents, and a stop ends a 
   const runner = createRunner();
   const [a, b, done] = [task(10, 'implement'), task(11, 'implement'), task(12, 'ready')];
   assert.throws(() => runner.start(done), /demo-12 has nothing for an agent to do\. The task reached a step that is yours\./);
-  assert.throws(() => runner.start('demo-999'), /No factory issue "demo-999"/);
+  assert.throws(() => runner.start('demo-999'), /No Codeignite task "demo-999"/);
   assert.equal(runner.start(a), 'running');
   assert.equal(runner.start(b), 'queued');
   assert.throws(() => runner.start(a), /An agent already runs on demo-10/);

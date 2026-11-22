@@ -7,6 +7,8 @@
   const compact = (value) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
   const labels = { input: 'Input · uncached', cacheWrite: 'Cache write', cacheRead: 'Cache read', output: 'Output' };
   const served = Boolean(window.__factoryToken);
+  // The command as the user can type it here: "codeignite", or the full form when that name is not set up.
+  const cli = () => data.cli || 'codeignite';
   let data = { issues: [], projects: [] }, peek = null, lost = false, selected = null, tab = '', shownTab = 'details', view = 'work', scope = 'task', query = '', pending = null;
   let rates = { ...DEFAULT_ASSUMPTIONS }, object = 'bulb';
   let report = null, reportDay = '', reportPlain = '', reportBusy = false;
@@ -68,15 +70,15 @@
   function setupRows() {
     const bare = data.projects.filter(p => !p.gates.length).map(p => p.key);
     const rows = [...setup.checks.map(c => [c.ok, c.name, c.fix]),
-      [data.projects.length > 0, `${data.projects.length} project(s) registered`, 'Register one on the Projects page, or run "factory setup" in your terminal.'],
+      [data.projects.length > 0, `${data.projects.length} project(s) registered`, `Register one on the Projects page, or run "${cli()} setup" in your terminal.`],
       [!bare.length, bare.length ? `No check configured: ${bare.join(', ')}` : 'Every project has a check', 'Open Projects and use Edit to add one.'],
-      [setup.hooksInstalled, 'Claude Code guard hooks', 'Optional. Run "factory hooks --install" in your terminal.']];
+      [setup.hooksInstalled, 'Claude Code guard hooks', 'Optional. They stop an agent from pushing before you approve.', '<button class="fd-btn" type="button" data-install-hooks>Install the hooks</button>']];
     return rows;
   }
   function checklist(full = false) {
     if (!served) return '';
     if (!setup) return '<p class="fd-caption">Checking setup…</p>';
-    const row = (ok, text, fix) => `<li><span class="${ok ? 'fd-pass' : 'fd-warning'}">${ok ? '✓' : '!'}</span> ${escape(text)}${ok || !fix ? '' : `<br><span class="fd-caption">${escape(fix)}</span>`}</li>`;
+    const row = (ok, text, fix, act = '') => `<li><span class="${ok ? 'fd-pass' : 'fd-warning'}">${ok ? '✓' : '!'}</span> ${escape(text)}${ok || !fix ? '' : `<br><span class="fd-caption">${escape(fix)}</span>`}${ok || !act ? '' : `<div class="fd-actions">${act}</div>`}</li>`;
     const rows = setupRows();
     const open = rows.filter(([ok]) => !ok).length;
     // Elsewhere than on Settings the list appears only when something needs the user.
@@ -179,7 +181,7 @@
   };
   const liveLine = (i) => `<div class="fd-live" data-live="${escape(i.id)}">${liveInner(i)}</div>`;
   function renderBoard() {
-    if (!data.issues.length) { $('kanban').innerHTML = `<div class="fd-empty"><h2 class="fd-h1">Your workspace is ready.</h2>${data.projects.length ? '<p>No task is in flight. Pick an issue under GitHub issues, or use New task. It appears here and moves across the board as its checks pass.</p>' : '<p>No project is registered yet. Run <code>factory setup</code>, or register projects on the Projects page.</p>'}${checklist()}</div>`; renderDrawer(); return; }
+    if (!data.issues.length) { $('kanban').innerHTML = `<div class="fd-empty"><h2 class="fd-h1">Your workspace is ready.</h2>${data.projects.length ? '<p>No task is in flight. Pick an issue under GitHub issues, or use New task. It appears here and moves across the board as its checks pass.</p>' : '<p>No project is registered yet. Run <code>' + escape(cli()) + ' setup</code>, or register projects on the Projects page.</p>'}${checklist()}</div>`; renderDrawer(); return; }
     const card = i => { const st = queueStatus(i); return `<button class="fd-tcard" data-peek="${escape(i.id)}" aria-pressed="${i.id === peek}"><span class="fd-repo"><span>${escape(i.repo)}</span><span>${i.kind === 'review' ? 'PR ' : ''}#${escape(i.issue)}</span></span><strong>${escape(i.title)}</strong><span class="fd-status ${st.cls}">${escape(st.text)}</span><span class="fd-tcard-meta">${i.tier === 'trivial' ? 'trivial · ' : ''}${agoShort(i.stageSince)} in this step${i.reach.length ? ` · reaches ${plural(i.reach.length, 'project')}` : ''}</span>${liveLine(i)}</button>`; };
     // Only columns with tasks are drawn; the empty ones are named in one line, so a single card is not lost among them.
     const filled = COLUMNS.filter(([key]) => data.issues.some(i => columnOf(i) === key));
@@ -303,7 +305,7 @@
   function renderDetail() {
     const i = task();
     if (!i) {
-      $('detail').innerHTML = `<div class="fd-empty"><h2 class="fd-h1">Your workspace is ready.</h2>${data.projects.length ? '<p>No task is in flight. Pick an issue under GitHub issues, or use New task with an issue or pull request number. Its progress, evidence, and usage will appear here.</p>' : '<p>No project is registered yet. This command checks your tools and registers every GitHub repository in your workspace:</p><pre>factory setup</pre><p>You can also register them one by one on the Projects page.</p>'}${checklist()}</div>`;
+      $('detail').innerHTML = `<div class="fd-empty"><h2 class="fd-h1">Your workspace is ready.</h2>${data.projects.length ? '<p>No task is in flight. Pick an issue under GitHub issues, or use New task with an issue or pull request number. Its progress, evidence, and usage will appear here.</p>' : '<p>No project is registered yet. This command checks your tools and registers every GitHub repository in your workspace:</p><pre>' + escape(cli()) + ' setup</pre><p>You can also register them one by one on the Projects page.</p>'}${checklist()}</div>`;
       return;
     }
     // Three tabs: what you approve, what proves it, and everything else. Old addresses still open the right one.
@@ -496,8 +498,8 @@
     renderReport();
   }
   function renderReport() {
-    const head = '<div><h2 class="fd-h1">Daily report</h2><p class="fd-desc">What was recorded for one day: factory tasks, your commits and your pull requests in the registered projects.</p></div>';
-    if (!served) { $('report').innerHTML = `<header class="fd-page-head">${head}</header><p class="fd-blank">This view needs the local server. Run <code>factory board</code>.</p>`; return; }
+    const head = '<div><h2 class="fd-h1">Daily report</h2><p class="fd-desc">What was recorded for one day: Codeignite tasks, your commits and your pull requests in the registered projects.</p></div>';
+    if (!served) { $('report').innerHTML = `<header class="fd-page-head">${head}</header><p class="fd-blank">This view needs the local server. Run <code>codeignite board</code>.</p>`; return; }
     const today = dayOf(new Date());
     const controls = `<div class="fd-actions"><button class="fd-btn" type="button" data-report-shift="-1" aria-label="Previous day">←</button><input id="report-day" type="date" aria-label="Day" value="${escape(reportDay)}" max="${today}"><button class="fd-btn" type="button" data-report-shift="1" aria-label="Next day" ${reportDay >= today ? 'disabled' : ''}>→</button><button class="fd-btn" type="button" data-report-day="${today}" ${reportDay === today ? 'disabled' : ''}>Today</button></div>`;
     let body = '<p class="fd-blank">Collecting the day…</p>';
@@ -568,10 +570,10 @@
       if (!response.ok) throw new Error((await response.json()).error || 'Export failed.');
       const link = document.createElement('a');
       link.href = URL.createObjectURL(new Blob([await response.text()], { type: 'application/json' }));
-      link.download = 'factory.config.json';
+      link.download = 'codeignite.config.json';
       link.click();
       URL.revokeObjectURL(link.href);
-      notice('Saved factory.config.json. A teammate applies it with: factory setup --workspace <directory> --from factory.config.json');
+      notice('Saved codeignite.config.json. A teammate applies it with: codeignite setup --workspace <directory> --from codeignite.config.json');
     } catch (error) { notice(error.message, true); }
   }
   $('projects').onclick = e => {
@@ -583,7 +585,7 @@
       const key = remove.dataset.remove;
       pending = { path: '/api/project/remove', body: { key }, done: `${key}: removed from the registry.` };
       $('action-title').textContent = 'Remove this project?';
-      $('action-text').textContent = `${key}: this removes the project from the factory registry. The repository folder, its branches and recorded task history are kept. A project with tasks in flight is refused.`;
+      $('action-text').textContent = `${key}: this removes the project from the Codeignite registry. The repository folder, its branches and recorded task history are kept. A project with tasks in flight is refused.`;
       openAction('Remove project');
     }
   };
@@ -620,7 +622,7 @@
   }
   function renderGithub() {
     const head = '<div><h2 class="fd-h1">GitHub issues</h2><p class="fd-desc">Issues in your registered projects, read through the GitHub CLI on this machine.</p></div>';
-    if (!served) { $('github').innerHTML = `<header class="fd-page-head">${head}</header><p class="fd-blank">This view needs the local server. Run <code>factory board</code>.</p>`; return; }
+    if (!served) { $('github').innerHTML = `<header class="fd-page-head">${head}</header><p class="fd-blank">This view needs the local server. Run <code>codeignite board</code>.</p>`; return; }
     const f = ghFilter;
     const option = (value, label, current) => `<option value="${escape(value)}" ${value === current ? 'selected' : ''}>${escape(label)}</option>`;
     const state = (value, label) => `<label><input type="radio" name="state" value="${value}" ${f.state === value ? 'checked' : ''}><span>${label}</span></label>`;
@@ -703,7 +705,7 @@
     const g = data.graph, n = mapSel && node(mapSel);
     if (!n) {
       const linked = g.nodes.some(x => x.dependsOn.length);
-      return `<h2 class="fd-h1">${plural(g.nodes.length, 'project')} in this workspace</h2><p>Select a project to see what it is, what it depends on, who uses it, and what a change in it reaches.</p>${linked ? '' : `<div class="fd-next"><h3>No relationships declared yet</h3><p>Say which projects a project depends on in <code>repos.json</code>:</p><pre>"dependsOn": [{ "project": "theming", "label": "uses styles" }]</pre><p class="fd-caption"><code>factory doctor</code> suggests links it finds in package.json files.</p></div>`}${g.problems.length ? `<h3>Problems in the declared relationships</h3><ul class="fd-needs">${g.problems.map(p => `<li class="fd-fail">${escape(p)}</li>`).join('')}</ul>` : ''}${g.undeclared.length ? `<h3>Found in package.json, not declared</h3><ul class="fd-needs">${g.undeclared.map(l => `<li>${escape(l.from)} lists <code>${escape(l.package)}</code>, which ${escape(l.to)} publishes.</li>`).join('')}</ul>${served ? `<div class="fd-actions"><button class="fd-btn fd-primary" data-declare>Add these ${g.undeclared.length} relationships</button></div>` : ''}<p class="fd-caption fd-explain">This writes them to <code>dependsOn</code> in repos.json, so the map can draw them. A link that would make two projects depend on each other is left out. Remove one later by editing <code>dependsOn</code>.</p>` : ''}`;
+      return `<h2 class="fd-h1">${plural(g.nodes.length, 'project')} in this workspace</h2><p>Select a project to see what it is, what it depends on, who uses it, and what a change in it reaches.</p>${linked ? '' : `<div class="fd-next"><h3>No relationships declared yet</h3><p>Say which projects a project depends on in <code>repos.json</code>:</p><pre>"dependsOn": [{ "project": "theming", "label": "uses styles" }]</pre><p class="fd-caption"><code>codeignite doctor</code> suggests links it finds in package.json files.</p></div>`}${g.problems.length ? `<h3>Problems in the declared relationships</h3><ul class="fd-needs">${g.problems.map(p => `<li class="fd-fail">${escape(p)}</li>`).join('')}</ul>` : ''}${g.undeclared.length ? `<h3>Found in package.json, not declared</h3><ul class="fd-needs">${g.undeclared.map(l => `<li>${escape(l.from)} lists <code>${escape(l.package)}</code>, which ${escape(l.to)} publishes.</li>`).join('')}</ul>${served ? `<div class="fd-actions"><button class="fd-btn fd-primary" data-declare>Add these ${g.undeclared.length} relationships</button></div>` : ''}<p class="fd-caption fd-explain">This writes them to <code>dependsOn</code> in repos.json, so the map can draw them. A link that would make two projects depend on each other is left out. Remove one later by editing <code>dependsOn</code>.</p>` : ''}`;
     }
     const tasks = data.issues.filter(i => i.repo === n.key), project = data.projects.find(p => p.key === n.key);
     if (mapMode === 'reach') {
@@ -715,7 +717,7 @@
     return `<h2 class="fd-h1">${escape(n.key)}</h2><p>${n.description ? escape(n.description) : '<span class="fd-muted">No description yet. Add <code>description</code> to this project in repos.json so newcomers know what it is.</span>'}</p>${n.owns ? `<p class="fd-caption">Change here when: ${escape(n.owns)}</p>` : ''}<h3>Depends on</h3>${n.dependsOn.length ? `<ul class="fd-plain">${n.dependsOn.map(d => `<li>${nodeLink(d.key)}<span class="fd-muted">${d.label ? ` · ${escape(d.label)}` : ''}${pin(d)}</span></li>`).join('')}</ul>` : '<p class="fd-muted">Nothing in this workspace.</p>'}<h3>Used by</h3>${n.usedBy.length ? `<ul class="fd-plain">${n.usedBy.map(u => { const label = node(u).dependsOn.find(d => d.key === n.key).label; return `<li>${nodeLink(u)}<span class="fd-muted">${label ? ` · ${escape(label)}` : ''}</span></li>`; }).join('')}</ul>` : '<p class="fd-muted">Nothing in this workspace.</p>'}<div class="fd-next fd-gap"><h3>If you change this project</h3><p>${n.reach.length ? `The change reaches <strong>${plural(n.reach.length, 'project')}</strong>: ${escape(names(n.reach.map(r => r.key)))}. Plan to check them before release.` : 'No other project in this workspace is affected.'}</p>${n.reach.length ? '<button class="fd-btn" data-mapmode="reach">Show what a change reaches</button>' : ''}</div><h3>Tasks in flight</h3>${tasks.map(miniTask).join('') || '<p class="fd-muted">None.</p>'}<h3>How it is checked</h3><p>${project?.gates.length ? project.gates.map(x => `<code>${escape(x.cmd)}</code>`).join(' · ') : '<span class="fd-warning">No check configured.</span>'}</p><div class="fd-actions fd-gap"><button class="fd-btn fd-primary" data-start="${escape(n.key)}">Start a task here</button>${externalLink(`https://github.com/${n.remote}`, 'Open on GitHub')}</div>`;
   }
   function renderMap() {
-    if (!data.graph?.nodes.length) { $('map').innerHTML = '<div class="fd-page"><h2 class="fd-h1">Workspace map</h2><p>No projects are registered yet.</p><pre>factory add app /path/to/app --verify "npm run verify"</pre></div>'; return; }
+    if (!data.graph?.nodes.length) { $('map').innerHTML = `<div class="fd-page"><h2 class="fd-h1">Workspace map</h2><p>No projects are registered yet.</p><pre>${escape(cli())} add app /path/to/app --verify "npm run verify"</pre></div>`; return; }
     if (mapSel && !node(mapSel)) mapSel = null;
     const tracing = mapMode === 'reach' && mapSel;
     $('map').innerHTML = `<div class="fd-map"><div class="fd-canvas"><div class="fd-map-bar"><p class="fd-board-note">${tracing ? `Showing everything a change in <strong>${escape(mapSel)}</strong> reaches, in order.` : 'An arrow means: a change in the upper project reaches the lower one. Select a project to learn about it.'}</p><div class="fd-switch" role="group" aria-label="Map mode"><button data-mapmode="explore" aria-pressed="${mapMode === 'explore'}">Explore</button><button data-mapmode="reach" aria-pressed="${mapMode === 'reach'}">What a change reaches</button></div></div><div class="fd-graph-wrap">${graphSvg()}</div>${graphTree()}</div><aside class="fd-side" id="map-panel" tabindex="-1" aria-label="Project details">${mapPanel()}</aside></div>`;
@@ -728,7 +730,7 @@
     $('metrics').innerHTML = '<h2 class="fd-h1">Metrics</h2><p class="fd-desc">How tasks went, derived from recorded evidence and stage history. Archived tasks are included; reviews of other people’s pull requests are not.</p>'
       + `<div class="fd-tiles">${tile('FIRST-PASS CHECK RATE', na(s.firstPassRate, v => `${Math.round(v * 100)}%`), `${number(s.firstPass)} of ${number(s.withGateRuns)} tasks passed every check on its first recorded run. ${number(s.tasks - s.withGateRuns)} without check runs are left out.`)}${tile('MEDIAN TIME TO APPROVAL', na(s.medianHoursToApproval, v => `${number(v, 1)} h`), `${number(s.approved)} approved task${s.approved === 1 ? '' : 's'}, from intake to approval.`)}${tile('REWORK', escape(number(s.failedGateRuns + s.verifierFails + s.resets)), `${number(s.failedGateRuns)} failed check runs · ${number(s.verifierFails)} verifier fail verdicts · ${number(s.resets)} resets after passing checks.`)}</div>`
       + `<div class="fd-table-wrap"><table class="fd-usage-table fd-metrics-table"><caption class="sr-only">Measures per task</caption><thead><tr>${['Task', 'Tier', 'Type', 'Step', 'First pass', 'Failed runs', 'Verifier fails', 'Resets', 'Hours to approval', 'New tokens'].map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${m.tasks.map(t => `<tr><th scope="row">${escape(t.id)}</th><td>${na(t.tier)}</td><td>${na(t.type)}</td><td>${escape(stepName(t.stage, t.id))}</td><td>${t.firstPass === null ? na(null) : `<span class="${t.firstPass ? 'fd-pass' : 'fd-fail'}">${t.firstPass ? 'yes' : 'no'}</span>`}</td><td>${number(t.failedGateRuns)}</td><td>${number(t.verifierFails)}</td><td>${number(t.resets)}</td><td>${na(t.hoursToApproval, v => number(v, 1))}</td><td>${na(t.freshTokens, v => compact(v) + (t.tokensPartial ? ' · partial' : ''))}</td></tr>`).join('')}</tbody></table></div>`
-      + '<p class="fd-caption fd-explain">“n/a” means no data, not zero. These describe recorded work in this factory; they are not a productivity comparison.</p>';
+      + '<p class="fd-caption fd-explain">“n/a” means no data, not zero. These describe recorded work in this Codeignite; they are not a productivity comparison.</p>';
   }
   function renderActivity() {
     const events = data.issues.flatMap(i => i.history.map(h => ({ ...h, task: i }))).sort((a, b) => b.at.localeCompare(a.at));
@@ -876,7 +878,7 @@
     }
     if (e.target.closest('.fd-now a.fd-btn:not([data-agent-log])')) { launched[task().id] = Date.now(); setTimeout(renderDetail, 300); }
     if (e.target.closest('[data-copy-prompt]')) {
-      navigator.clipboard.writeText(task().prompt).then(() => notice('Prompt copied. Paste it into your agent.'), () => notice('Clipboard unavailable. Run "factory next" for this task in your agent instead.'));
+      navigator.clipboard.writeText(task().prompt).then(() => notice('Prompt copied. Paste it into your agent.'), () => notice('Clipboard unavailable. Run "codeignite next" for this task in your agent instead.'));
     }
     const action = e.target.closest('[data-action]');
     if (action?.dataset.action === 'reject') {
@@ -974,7 +976,7 @@
   function newCommand() {
     const project = $('new-project').value, n = $('new-number').value;
     const valid = /^[1-9]\d*$/.test(n) && project;
-    $('new-command').textContent = valid ? `factory ${$('new-kind').value} '${project}#${n}'` : 'Choose a project and enter a number.';
+    $('new-command').textContent = valid ? `${cli()} ${$('new-kind').value} '${project}#${n}'` : 'Choose a project and enter a number.';
     $('copy-command').disabled = !valid; $('start-task').disabled = !valid || !served;
   }
   // Projects are offered by what they own, so someone new can find where a change belongs.
@@ -1024,7 +1026,7 @@
     const review = data.issues.find(i => i.stage === 'ready' && !i.blocked);
     return [
       { done: known && !tools.length, wait: !known, title: 'The tools are installed', todo: tools.length ? `Still missing: ${tools.map(c => c.name).join(', ')}.` : 'Node.js, Git, the GitHub CLI with a login, and Claude Code.', act: tools.length ? '<button class="fd-btn" type="button" data-start-view="settings">See what is missing</button>' : '' },
-      { done: known && setup.hooksInstalled, wait: !known, title: 'The guard hooks are installed', todo: 'They stop an agent from pushing or opening a pull request before you approve. Run this in a terminal:', code: 'factory hooks --install' },
+      { done: known && setup.hooksInstalled, wait: !known, title: 'The guard hooks are installed', todo: 'They stop an agent from pushing or opening a pull request before you approve.', act: '<button class="fd-btn" type="button" data-install-hooks>Install the hooks</button>' },
       { done: data.projects.some(p => p.gates.length), title: 'A project is registered with a check', todo: data.projects.length ? 'Your projects have no check yet. A check is a command such as the test run; every change must pass it.' : 'A project is one of your repositories. Its check is a command such as the test run; every change must pass it.', act: '<button class="fd-btn" type="button" data-start-view="projects">Open Projects</button>' },
       { done: Boolean(f.task), title: 'Your first task is started', todo: 'A task is one GitHub issue that Codeignite takes through its steps.', act: data.projects.length ? '<button class="fd-btn" type="button" data-start-new>Start a task</button><button class="fd-btn fd-ghost" type="button" data-start-view="github">Pick from your GitHub issues</button>' : '' },
       { done: Boolean(f.run), title: 'An agent has worked on a task', todo: 'Open a task and press "Run agent". It works step by step and stops when the task needs you.', act: agentTask ? `<button class="fd-btn" type="button" data-open-task="${escape(agentTask.id)}">Open ${escape(agentTask.id)}</button>` : '' },
@@ -1047,6 +1049,14 @@
     if (e.target.closest('[data-start-new]')) return openNew();
     const open = e.target.closest('[data-open-task]'); if (open) openTask(open.dataset.openTask);
   };
+  // Installs the guard hooks from the board, after saying which file changes.
+  document.addEventListener('click', e => {
+    if (!e.target.closest('[data-install-hooks]')) return;
+    pending = { path: '/api/hooks/install', body: {}, done: 'The hooks are installed. Restart Claude Code sessions that are running.' };
+    $('action-title').textContent = 'Install the guard hooks?';
+    $('action-text').textContent = 'This adds three hooks to your Claude Code settings (settings.json in your Claude Code folder) and writes the "codeignite" skill and the "codeignite-verifier" agent beside it. Your other hooks and settings stay, and the previous file is kept as settings.json.bak.';
+    openAction('Install the hooks');
+  });
   // ----- notifications -----
   // The tab title always counts the tasks that wait for you. A notification of the system is an extra the user
   // switches on in Settings; it is shown while the board is open in a tab that is not in front.

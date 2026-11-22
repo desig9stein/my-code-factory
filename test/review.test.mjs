@@ -7,7 +7,7 @@ import path from 'node:path';
 import { before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/factory.mjs');
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/codeignite.mjs');
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'factory-review-')));
 const WORKSPACE = path.join(tmp, 'ws');
 const ROOT = path.join(WORKSPACE, 'factory');
@@ -18,11 +18,11 @@ const ISSUE = path.join(ROOT, 'issues', ID);
 const PR_JSON = path.join(tmp, 'pr.json');
 
 // Lets nested "node --test" runs report their own exit code.
-delete process.env.FACTORY_PORT;
+delete process.env.CODEIGNITE_PORT;
 delete process.env.NODE_TEST_CONTEXT;
 Object.assign(process.env, {
-  FACTORY_ROOT: ROOT,
-  FACTORY_WORKSPACE: WORKSPACE,
+  CODEIGNITE_ROOT: ROOT,
+  CODEIGNITE_WORKSPACE: WORKSPACE,
   GIT_AUTHOR_NAME: 'Test',
   GIT_AUTHOR_EMAIL: 'test@example.com',
   GIT_COMMITTER_NAME: 'Test',
@@ -190,12 +190,12 @@ test('agents cannot reach the board, where approval happens', () => {
   assert.equal(decide({ tool_name: 'mcp__playwright__browser_navigate', tool_input: { url: 'http://127.0.0.1:4317/' }, cwd: WORKSPACE }).deny, true);
   assert.equal(decide({ tool_name: 'Write', tool_input: { file_path: path.join(tmp, 'notes.md'), content: 'see http://127.0.0.1:4317/' }, cwd: WORKSPACE }).deny, false);
   assert.equal(bash('curl -s http://127.0.0.1:3000/').deny, false);
-  assert.equal(bash('FACTORY_PORT=4400 node factory/bin/factory.mjs board').deny, true);
-  assert.equal(bash('node factory/bin/factory.mjs serve').deny, true);
-  assert.equal(bash('node factory/bin/factory.mjs board --no-open').deny, false);
+  assert.equal(bash('CODEIGNITE_PORT=4400 node factory/bin/codeignite.mjs board').deny, true);
+  assert.equal(bash('node factory/bin/codeignite.mjs serve').deny, true);
+  assert.equal(bash('node factory/bin/codeignite.mjs board --no-open').deny, false);
   // Pairing a browser is the user's: the key, the pairing calls, and hiding that the caller is an agent are refused.
-  assert.equal(bash('cat factory/.board-key').deny, true);
+  assert.equal(bash('cat Codeignite/.board-key').deny, true);
   assert.equal(decide({ tool_name: 'Read', tool_input: { file_path: path.join(WORKSPACE, 'factory', '.board-key') }, cwd: WORKSPACE }).deny, true);
-  assert.equal(bash('env -u CLAUDECODE node factory/bin/factory.mjs board --no-open').deny, true);
+  assert.equal(bash('env -u CLAUDECODE node factory/bin/codeignite.mjs board --no-open').deny, true);
   assert.equal(bash('curl -X POST http://127.0.0.1:9999/api/pair/start').deny, true);
 });

@@ -8,14 +8,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const BIN = fileURLToPath(new URL('../bin/factory.mjs', import.meta.url));
+const BIN = fileURLToPath(new URL('../bin/codeignite.mjs', import.meta.url));
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'factory-concurrency-')));
 const ROOT = path.join(tmp, 'data');
 const WS = path.join(tmp, 'ws');
 const STUB = path.join(tmp, 'stub');
-delete process.env.FACTORY_PORT;
+delete process.env.CODEIGNITE_PORT;
 delete process.env.NODE_TEST_CONTEXT;
-Object.assign(process.env, { FACTORY_ROOT: ROOT, FACTORY_WORKSPACE: WS, PATH: `${STUB}${path.delimiter}${process.env.PATH}`, CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'), GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' });
+Object.assign(process.env, { CODEIGNITE_ROOT: ROOT, CODEIGNITE_WORKSPACE: WS, PATH: `${STUB}${path.delimiter}${process.env.PATH}`, CLAUDE_CONFIG_DIR: path.join(tmp, 'claude'), GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' });
 
 const { withLock, withTask, withSettings } = await import('../lib/lock.mjs');
 const { loadState, saveState, sync } = await import('../lib/state.mjs');
@@ -69,7 +69,7 @@ test('a lock is entered again by its holder, refused to others, and taken over f
   // Another live holder: a try returns at once, a wait gives up and names the holder.
   write(file, JSON.stringify({ pid: process.ppid, at: new Date().toISOString() }));
   assert.equal(withLock(file, () => 'ran', { tryOnly: true, busy: 'busy' }), 'busy');
-  assert.throws(() => withLock(file, () => 'ran', { wait: 150, what: 'app-1' }), new RegExp(`Another factory command \\(process ${process.ppid}\\) is changing app-1 and did not finish`));
+  assert.throws(() => withLock(file, () => 'ran', { wait: 150, what: 'app-1' }), new RegExp(`Another Codeignite command \\(process ${process.ppid}\\) is changing app-1 and did not finish`));
   assert.equal(fs.existsSync(file), true);
   // A holder that no longer runs, and one that held far too long, lose the lock.
   write(file, JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() }));
@@ -89,7 +89,7 @@ test('a state read before another writer saved is refused instead of dropping th
   theirs.history.push({ stage: 'implement', at: new Date().toISOString(), note: 'theirs' });
   saveState(theirs);
   mine.history.push({ stage: 'implement', at: new Date().toISOString(), note: 'mine' });
-  assert.throws(() => saveState(mine), /demo-1 was changed by another factory command while this one worked\. Nothing was written/);
+  assert.throws(() => saveState(mine), /demo-1 was changed by another Codeignite command while this one worked\. Nothing was written/);
   assert.deepEqual(loadState(id).history.map((h) => h.note), ['theirs']);
   // Read again, change, save: both changes are there.
   const again = loadState(id);
@@ -203,7 +203,7 @@ test('a job reports its error to the caller, and a closed set of lanes starts no
   const lanes = createLanes();
   await assert.rejects(lanes.run('local', 'nope'), /Unknown job "nope"/);
   await assert.rejects(lanes.run('side', 'board'), /Unknown lane "side"/);
-  await assert.rejects(lanes.run('local', 'diff', { id: 'demo-999' }), /No factory issue "demo-999"/);
+  await assert.rejects(lanes.run('local', 'diff', { id: 'demo-999' }), /No Codeignite task "demo-999"/);
   assert.match(await lanes.run('local', 'board'), /^window\.__factoryData\(/);
   lanes.close();
   await assert.rejects(lanes.run('local', 'board'), /The board is stopping/);
