@@ -83,6 +83,17 @@ A subscription login is meant for your own use of Claude Code. The factory start
 
 The runner knows a coding agent only through an adapter in `lib/harnesses.mjs`: how to build the command of one session, how to read the lines it prints, which permission modes and accounts it offers, and where it writes its session file. `lib/harness-claude.mjs` is the one adapter today. A second agent is one more file with the same functions and one line in that list; the queue, the stage loop, the board and the settings do not change.
 
+## After the pull request opens
+
+While a task is at `pr-opened`, the board asks GitHub about its pull request every three minutes, and at once with "Ask GitHub now": the result of each check, the reviews, the comments and the comments on lines, through your `gh` login. What the author of the pull request wrote is left out. The answer is kept in `pr-feedback.json` in the task's data folder.
+
+- A failed check, or something a reviewer wrote since you last sent feedback, puts the task under "Your turn" with the checks and the words listed. Nothing else happens by itself.
+- "Send to the agent" opens the text that would be sent, made from the failed checks and the feedback. Change it to say what you want fixed, then confirm. The task returns to `implement` with your text in the brief. Text written on GitHub reaches an agent only this way.
+- The fix goes through the checks, the verifier and your approval like any change. "Create the pull request" then pushes the approved commit to the same branch and records the update.
+- Checks of the commit before the fix are not shown as failures of the new one, and feedback you already sent is not shown as new again.
+- A merged pull request reads "merged" and offers Archive. A closed one says so.
+- When GitHub cannot be asked, the last answer stays on screen with the reason.
+
 ## Configuring the workflow
 
 The Workflow page of the board edits the workflow for all projects or for one project. Defaults apply first, then the "All projects" values, then the project's. Global changes are stored in `workflow.json` in the data directory, project changes under `workflow` in the project's `repos.json` entry. Only changed values are stored.

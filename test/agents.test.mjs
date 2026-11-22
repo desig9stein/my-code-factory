@@ -218,7 +218,7 @@ test('the queue runs at most the configured number of agents, and a stop ends a 
 test('the board starts and stops an agent only with its token, and shows the run and the settings', async () => {
   saveAgentSettings({ maxConcurrent: 2 });
   behave('hang');
-  const server = await startServer(0, { pairing: false });
+  const server = await startServer(0, { pairing: false, followEvery: 0 });
   const base = `http://127.0.0.1:${server.address().port}`;
   const token = /__factoryToken="([0-9a-f]+)"/.exec(await (await fetch(base)).text())[1];
   const call = (pathname, body, headers = { 'X-Factory-Token': token }) => fetch(`${base}${pathname}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
