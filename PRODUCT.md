@@ -33,7 +33,7 @@ A repeatable pipeline. Every task goes through the same stages, gates and brakes
 - Projects page, Workflow page, workspace map, GitHub issues view, Daily report, metrics, and a Settings page with the setup checklist and agent settings. "New task" is on the Work queue only.
 - Token counts per task and session, with electricity and carbon scenarios whose assumptions and formulas are shown.
 - "Run agent" starts the user's own coding agent in the background, one session per step, until the task needs the user. What it may do, how many run at once and the account are settings of the machine.
-- After a pull request opens the board follows its checks and reviews and brings failures and feedback to the user, who decides what goes back to the agent.
+- After a pull request opens the user can ask GitHub, from the task, for its checks and reviews; failures and feedback are shown, and the user decides what goes back to the agent. The board does not ask GitHub by itself.
 - The tab title counts the tasks that wait for the user, and an optional system notification tells them when a task newly needs them. Both work from the open board tab; nothing is sent anywhere.
 - Brakes: a limit on failed attempts, and "Send back" with a lesson that later briefs carry.
 - Constraint: local only. No hosted version, accounts or telemetry.

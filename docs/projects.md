@@ -40,7 +40,7 @@ The GitHub issues view runs `gh search issues` over the remotes of the registere
 { "issues": { "who": "assigned", "login": "", "state": "open", "label": "" } }
 ```
 
-`who` is `assigned` (the default), `created`, `mentioned`, `involved`, `user` (assigned to `login`) or `anyone`. `state` is `open` or `closed`. The project select filters the loaded list in the browser. Results are cached for 60 seconds; Refresh asks GitHub again. GitHub returns at most the 200 most recently updated issues per search. Pull requests are not listed.
+`who` is `assigned` (the default), `created`, `mentioned`, `involved`, `user` (assigned to `login`) or `anyone`. `state` is `open` or `closed`. The project select filters the loaded list in the browser. The list is kept in `cache/github-issues.json` in the data folder and shown from there, also after the board restarts. GitHub is asked again only when you press Refresh, change the filter, or add or remove a project; the page says how old the list is. Which issues are already tasks is worked out on this machine each time, so that part is always current. GitHub returns at most the 200 most recently updated issues per search. Pull requests are not listed.
 
 ## `repos.json`
 
