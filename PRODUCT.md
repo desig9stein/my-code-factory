@@ -55,5 +55,5 @@ A repeatable pipeline. Every task goes through the same stages, gates and brakes
 1. The same pipeline for every task. A stage, gate or brake means the same thing in every project.
 2. Nothing is approved on an agent's word. An approval covers the exact commit or draft on screen, with its evidence.
 3. Say whose turn it is. Each task states what it needs next and from whom.
-4. Explain itself to a stranger. A developer who has never seen the repositories or the tool understands a screen without outside help. The explanations are one switch away ("? Explain"), so a screen shows status and the next action first and does not repeat what a returning user knows.
+4. Explain itself to a stranger. A developer who has never seen the repositories or the tool understands a screen without outside help. The explanations are one switch away ("? Explain"), so a screen shows status and the next action first and does not repeat what a returning user knows. A new user gets them by default until their first approval, with a "Get started" panel that names the next step.
 5. Stay on the user's machine. Project data does not leave it.
