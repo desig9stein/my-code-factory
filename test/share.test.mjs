@@ -69,7 +69,7 @@ before(async () => {
   write(path.join(ROOT, 'repos.json'), JSON.stringify(registry));
   saveWorkflow('global', { stages: { plan: { skipFor: ['docs'] } } });
   saveWorkflow('alpha', { stages: { implement: { use: [{ ref: '.github/agents/implementer.md', kind: 'agent' }] } } });
-  server = await startServer(0, { pairing: false });
+  server = await startServer(0, { pairing: false, followEvery: 0 });
   base = `http://127.0.0.1:${server.address().port}`;
   token = /__factoryToken="([0-9a-f]{32})"/.exec(await (await fetch(`${base}/`)).text())[1];
 });

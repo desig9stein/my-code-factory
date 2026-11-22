@@ -133,7 +133,7 @@
   // A run that ended without reaching your review leaves the task with nobody on it, until someone works on it again.
   const STOPPED = ['error', 'stalled', 'timeout', 'limit', 'missing', 'interrupted'];
   const agentStopped = (i) => i.run?.status === 'ended' && STOPPED.includes(i.run.reason) && lastSeen(i) <= (Date.parse(i.run.endedAt || '') || 0) + 5000;
-  const needsYou = (i) => Boolean(i.blocked) || i.stage === 'ready' || i.stage === 'approved' || agentStopped(i);
+  const needsYou = (i) => Boolean(i.blocked) || i.stage === 'ready' || i.stage === 'approved' || agentStopped(i) || Boolean(i.followup?.needsYou);
   const failingGate = (i) => i.gates.find(g => g.status === 'failed');
   // Says what the task waits for; colour is never the only signal.
   function queueStatus(i) {
@@ -141,6 +141,9 @@
     if (i.stage === 'ready') return { text: 'Your turn · review', cls: 'fd-warning' };
     if (i.stage === 'approved') return { text: i.kind === 'review' ? 'Your turn · post the review' : 'Your turn · create the PR', cls: 'fd-warning' };
     if (agentStopped(i)) return { text: 'Your turn · agent stopped', cls: 'fd-fail' };
+    if (i.followup?.needsYou) return { text: i.followup.failed.length ? 'Your turn · pull request checks failed' : 'Your turn · pull request has feedback', cls: i.followup.failed.length ? 'fd-fail' : 'fd-warning' };
+    if (i.stage === 'pr-opened' && i.followup?.state === 'merged') return { text: 'Merged · archive when ready', cls: 'fd-pass' };
+    if (i.stage === 'pr-opened') return { text: i.followup?.pending ? 'Pull request open · checks running' : 'Pull request open', cls: 'fd-muted' };
     const failed = failingGate(i);
     if (failed) return { text: `Check "${failed.name}" failed`, cls: 'fd-fail' };
     return { text: `Agent · ${(i.stageTitle || i.stage).replaceAll('-', ' ')}`, cls: 'fd-muted' };
@@ -253,6 +256,20 @@
     }
     if (i.stage === 'approved' && i.kind === 'review') {
       return panel('you', 'you approved this review, now post it', `<p>Nothing has been posted yet.</p><div class="fd-actions">${served ? '<button class="fd-btn fd-primary" type="button" data-post-review>Post the review</button>' : ''}</div><p class="fd-caption fd-explain">Posts the approved draft on the pull request with its verdict, under your GitHub name.</p>`);
+    }
+    if (i.stage === 'pr-opened' && i.followup) {
+      const f = i.followup;
+      const pr = i.prUrl ? externalLink(i.prUrl, 'Open the pull request') : '';
+      const asked = f.fetchedAt ? `Asked GitHub ${agoShort(f.fetchedAt)} ago.` : 'GitHub has not answered yet.';
+      const again = served ? '<button class="fd-btn" type="button" data-check-pr>Ask GitHub now</button>' : '';
+      const problem = f.error ? `<p class="fd-warning">${escape(f.error)}</p>` : '';
+      const checks = f.failed.length ? `<p class="fd-now-label">Checks that failed:</p><ul class="fd-now-list">${f.failed.map(c => `<li>${c.url ? externalLink(c.url, c.name) : escape(c.name)}</li>`).join('')}</ul>` : '';
+      const notes = f.notes.length ? `<p class="fd-now-label">What reviewers wrote:</p><ul class="fd-now-list fd-feedback">${f.notes.map(n => `<li><strong>${escape(n.author)}</strong> <span class="fd-muted">${escape(n.kind)}${n.path ? ` · ${escape(n.path)}${n.line ? `:${escape(n.line)}` : ''}` : ''}</span>${n.body ? `<br>${escape(n.body)}` : ''}</li>`).join('')}</ul>` : '';
+      if (f.state === 'merged') return panel('done', 'The pull request is merged', `<p>${pr}${pr ? '. ' : ''}Nothing more happens here. Archive the task when you are done with it.</p>${served ? '<div class="fd-actions"><button class="fd-btn fd-primary" type="button" data-action="archive">Archive task</button></div>' : ''}`);
+      if (f.state === 'closed') return panel('done', 'The pull request was closed without merging', `<p>${pr}${pr ? '. ' : ''}Archive the task, or reopen the pull request on GitHub to continue.</p>${served ? '<div class="fd-actions"><button class="fd-btn" type="button" data-action="archive">Archive task</button></div>' : ''}`);
+      if (f.needsYou) return panel('you', f.failed.length ? 'the pull request\'s checks failed' : 'the pull request has feedback', `${checks}${notes}${problem}<div class="fd-actions">${served ? '<button class="fd-btn fd-primary" type="button" data-send-feedback>Send to the agent</button>' : ''}${again}</div><p class="fd-caption fd-explain">Sending returns the task to the agent with the text you confirm; you can change it first. The fix goes through the checks, the verifier and your approval before the pull request is updated. Nothing written on GitHub reaches the agent unless you send it.</p><p class="fd-caption">${pr}${pr ? '. ' : ''}${asked}</p>`);
+      const status = f.pending ? `${plural(f.pending, 'check')} still running${f.passed ? `, ${f.passed} passed` : ''}.` : f.passed ? `All ${plural(f.passed, 'check')} passed.` : 'No checks are reported for it.';
+      return panel('done', 'The pull request is open', `<p>${status}${f.approvals ? ` ${plural(f.approvals, 'approval')}.` : ''} ${f.decision === 'REVIEW_REQUIRED' ? 'It waits for a review.' : ''} This page says so when a check fails or a reviewer writes.</p>${problem}<div class="fd-actions">${again}${served ? '<button class="fd-btn fd-ghost" type="button" data-action="archive">Archive task</button>' : ''}</div><p class="fd-caption">${pr}${pr ? '. ' : ''}${asked}</p>`);
     }
     if (i.stage === 'pr-opened' || i.stage === 'posted') {
       return panel('done', i.stage === 'posted' ? 'The review is posted' : 'The pull request is open', `<p>${i.changes ? `${plural(i.changes.files, 'file')} changed, every check passed${i.verdict === 'pass' ? ' and the verifier agreed' : ''}. ` : ''}${i.prUrl ? `${externalLink(i.prUrl, 'Open the pull request')}. ` : ''}Archive the task ${i.stage === 'posted' ? 'when you are done with it' : 'once the pull request is merged'}.</p>${served ? '<div class="fd-actions"><button class="fd-btn" type="button" data-action="archive">Archive task</button></div>' : ''}`);
@@ -772,7 +789,7 @@
     if (e.target.closest('[data-close]')) { const id = peek; peek = null; renderBoard(); document.querySelector(`[data-peek="${CSS.escape(id)}"]`)?.focus(); return; }
     const open = e.target.closest('[data-open]'); if (open) return openTask(peek, open.dataset.open);
     // The drawer shows the same panel as the task page, so its buttons take the same path.
-    if (e.target.closest('[data-action], [data-unblock], [data-post-questions], [data-create-pr], [data-post-review], [data-copy-doc], [data-copy-prompt], [data-run-agent], [data-stop-agent], .fd-now a.fd-btn, [data-tab]')) { selected = peek; renderQueue(); renderDetail(); const twin = e.target.closest('[data-tab]'); if (twin) return openTask(peek, twin.dataset.tab); $('detail').dispatchEvent(new CustomEvent('fd-act', { detail: e.target })); }
+    if (e.target.closest('[data-action], [data-unblock], [data-post-questions], [data-create-pr], [data-post-review], [data-copy-doc], [data-copy-prompt], [data-run-agent], [data-stop-agent], [data-check-pr], [data-send-feedback], .fd-now a.fd-btn, [data-tab]')) { selected = peek; renderQueue(); renderDetail(); const twin = e.target.closest('[data-tab]'); if (twin) return openTask(peek, twin.dataset.tab); $('detail').dispatchEvent(new CustomEvent('fd-act', { detail: e.target })); }
   };
   $('detail').addEventListener('toggle', e => { if (e.target.open && e.target.dataset?.log) loadLog(e.target); }, true);
   document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => show(button.dataset.view));
@@ -796,6 +813,7 @@
       $('answer-text').textContent = mode === 'answer' ? 'Write your answers. The agent reads them, updates its triage, and either starts or comes back with what is still open.' : mode === 'skip' ? 'The agent is told the issue is clear enough, to use its best reading, and to state its assumptions in the plan. Add a note if you want to steer it.' : 'The task continues where it stopped and its failed attempts are counted from zero. Add a hint for the agent if you have one.';
       $('answer-form').elements.note.required = mode === 'answer';
       $('answer-label').textContent = mode === 'answer' ? 'Your answer' : 'Note for the agent (optional)';
+      $('confirm-answer').textContent = 'Continue the task';
       $('answer-dialog').showModal(); $('answer-form').elements.note.focus();
     }
     if (e.target.closest('[data-create-pr]')) {
@@ -831,6 +849,23 @@
       $('action-title').textContent = 'Post these questions on GitHub?';
       $('action-text').textContent = `The text shown on the page is posted as a comment on ${i.repo} #${i.issue}, under your GitHub name. Everyone who follows the issue sees it. The task keeps waiting until you put the answer here.`;
       openAction('Post the questions');
+    }
+    if (e.target.closest('[data-check-pr]')) {
+      const i = task(), button = e.target.closest('[data-check-pr]');
+      button.disabled = true;
+      post('/api/followup/check', { id: i.id }).then(() => { notice(`${i.id}: asked GitHub about the pull request.`); data.stamp = ''; refresh(); }, error => { notice(error.message, true); button.disabled = false; });
+    }
+    if (e.target.closest('[data-send-feedback]')) {
+      const i = task();
+      pending = { id: i.id, path: '/api/followup/send', done: `${i.id}: sent to the agent. Start the agent to carry on.` };
+      $('answer-form').reset(); $('answer-error').textContent = '';
+      $('answer-title').textContent = 'Send this to the agent?';
+      $('answer-text').textContent = 'The task returns to the agent with the text below. Change it to say what you want fixed; leave out what the agent should ignore. The fix comes back to you for approval before the pull request is updated.';
+      $('answer-label').textContent = 'What the agent should fix';
+      $('answer-form').elements.note.required = true;
+      $('answer-form').elements.note.value = i.followup?.draft || '';
+      $('confirm-answer').textContent = 'Send to the agent';
+      $('answer-dialog').showModal(); $('answer-form').elements.note.focus();
     }
     const agentButton = e.target.closest('[data-run-agent], [data-stop-agent]');
     if (agentButton) {
@@ -905,8 +940,8 @@
     e.preventDefault();
     $('confirm-answer').disabled = true;
     try {
-      await post('/api/unblock', { id: pending.id, note: e.target.elements.note.value });
-      notice(`${pending.id}: the task continues. Start the agent to carry on.`);
+      await post(pending.path || '/api/unblock', { id: pending.id, note: e.target.elements.note.value });
+      notice(pending.done || `${pending.id}: the task continues. Start the agent to carry on.`);
       $('answer-dialog').close(); pending = null; refresh();
     } catch (error) { $('answer-error').textContent = error.message; }
     finally { $('confirm-answer').disabled = false; }
@@ -1031,7 +1066,7 @@
     $('updated').textContent = `Loaded ${new Date().toLocaleTimeString()}`;
     // A redraw replaces the focused element; the one that stands for the same thing gets focus back.
     const held = document.activeElement, holder = held?.closest?.('section[id], aside[id], article[id]');
-    const key = held && holder && ['task', 'peek', 'tab', 'node', 'edit', 'mode', 'openTask', 'action', 'unblock', 'createPr', 'postReview', 'open', 'runAgent', 'stopAgent'].find(k => held.dataset?.[k] !== undefined);
+    const key = held && holder && ['task', 'peek', 'tab', 'node', 'edit', 'mode', 'openTask', 'action', 'unblock', 'createPr', 'postReview', 'open', 'runAgent', 'stopAgent', 'checkPr', 'sendFeedback'].find(k => held.dataset?.[k] !== undefined);
     render();
     if (key && !document.contains(held)) holder.querySelector(`[data-${key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)}="${CSS.escape(held.dataset[key])}"]`)?.focus({ preventScroll: true });
     if (!hashReady) { hashReady = true; if (location.hash.length > 1) applyHash(); else syncHash(); }

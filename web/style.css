@@ -435,4 +435,4 @@ body{margin:0;background:#141515}button,summary{cursor:pointer}button:disabled{o
 #factory-dark:not(.fd-explain-on) .fd-ph li{display:block;width:auto;min-width:0;padding:0}
 #factory-dark .fd-page>.fd-setup:first-child,#factory-dark .fd-page-head+.fd-setup{margin-top:4px}
 @media(max-width:680px){#factory-dark .fd-explain-btn span{display:none}#factory-dark .fd-explain-btn{margin-left:8px}}
-
+#factory-dark .fd-feedback li{margin:8px 0;white-space:pre-wrap;overflow-wrap:anywhere}
